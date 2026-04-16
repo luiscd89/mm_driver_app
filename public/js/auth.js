@@ -15,8 +15,12 @@ export function onAuth(cb) {
     if (user) {
       const token = await user.getIdTokenResult();
       currentClaims = token.claims || {};
-      await setDoc(doc(db, 'drivers', user.uid),
-        { lastSeen: serverTimestamp() }, { merge: true });
+      try {
+        await setDoc(doc(db, 'drivers', user.uid),
+          { lastSeen: serverTimestamp() }, { merge: true });
+      } catch (e) {
+        console.warn('lastSeen update failed:', e.message);
+      }
     }
     cb(user);
   });

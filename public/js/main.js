@@ -1,4 +1,4 @@
-import { onAuth, login, register, isAdmin, currentUser } from "./auth.js";
+import { onAuth, login, register, logout, isAdmin, currentUser } from "./auth.js";
 import { listenAsDriver, listenAsAdmin, subscribe, clearSubscriptions } from "./state.js";
 import { renderDriverApp, wireDriverEvents } from "./driver.js";
 import { renderAdmin, wireAdminEvents } from "./admin.js";
@@ -46,6 +46,9 @@ document.getElementById('gasSubmit').addEventListener('click', submitGasReceipt)
 document.getElementById('notifEnable').addEventListener('click', () => {
   if (currentUser) registerPush(currentUser.uid);
 });
+
+document.getElementById('logoutBtn').addEventListener('click', () => logout());
+document.getElementById('logoutBtnAdmin').addEventListener('click', () => logout());
 
 wireDriverEvents();
 wireAdminEvents();

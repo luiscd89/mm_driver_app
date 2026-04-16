@@ -26,4 +26,6 @@ export const auth      = getAuth(app);
 export const db        = getFirestore(app);
 export const storage   = getStorage(app);
 export const functions = getFunctions(app);
-export const messaging = (await isSupported()) ? getMessaging(app) : null;
+let _messaging = null;
+try { if (await isSupported()) _messaging = getMessaging(app); } catch {}
+export const messaging = _messaging;
