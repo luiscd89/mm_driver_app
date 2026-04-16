@@ -1,6 +1,6 @@
 import { auth, db } from "./firebase-config.js";
 import {
-  signInWithEmailAndPassword, signOut, onAuthStateChanged
+  signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged
 } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js";
 import { doc, setDoc, serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js";
@@ -24,6 +24,10 @@ export function onAuth(cb) {
 
 export async function login(email, password) {
   await signInWithEmailAndPassword(auth, email.trim(), password);
+}
+
+export async function register(email, password) {
+  await createUserWithEmailAndPassword(auth, email.trim(), password);
 }
 
 export async function logout() {

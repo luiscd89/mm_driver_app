@@ -1,4 +1,4 @@
-import { onAuth, login, isAdmin, currentUser } from "./auth.js";
+import { onAuth, login, register, isAdmin, currentUser } from "./auth.js";
 import { listenAsDriver, listenAsAdmin, subscribe, clearSubscriptions } from "./state.js";
 import { renderDriverApp, wireDriverEvents } from "./driver.js";
 import { renderAdmin, wireAdminEvents } from "./admin.js";
@@ -25,6 +25,18 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
     );
   } catch (err) {
     toast('Login failed: ' + err.message, 'alert');
+  }
+});
+
+document.getElementById('registerBtn').addEventListener('click', async () => {
+  const email = document.getElementById('loginEmail').value;
+  const password = document.getElementById('loginPassword').value;
+  if (!email || !password) return toast('Enter email and password first', 'alert');
+  try {
+    await register(email, password);
+    toast('Account created!', 'success');
+  } catch (err) {
+    toast('Registration failed: ' + err.message, 'alert');
   }
 });
 
