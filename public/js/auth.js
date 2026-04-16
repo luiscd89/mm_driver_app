@@ -26,11 +26,12 @@ export function onAuth(cb) {
   });
 }
 
+const ADMIN_USERS = { aitruckingmm: 'aitruckingmm@gmail.com' };
+
 function resolveEmail(input) {
-  const v = input.trim();
+  const v = input.trim().toLowerCase();
   if (v.includes('@')) return v;
-  // Admin shorthand
-  if (v === 'aitruckingmm') return 'aitruckingmm@gmail.com';
+  if (ADMIN_USERS[v]) return ADMIN_USERS[v];
   return v + '@mtndriver.com';
 }
 
