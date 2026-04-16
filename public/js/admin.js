@@ -13,7 +13,7 @@ let previousActiveDrivers = new Set();
 export function renderAdmin(tab = currentTab) {
   currentTab = tab;
   document.querySelectorAll('.atab').forEach((t, i) =>
-    t.classList.toggle('active', ['overview','drivers','gas'][i] === tab));
+    t.classList.toggle('active', ['overview','drivers','gas','logs'][i] === tab));
 
   const c = document.getElementById('adminContent');
   document.getElementById('gasCount').textContent = state.gasReceipts.length;
@@ -161,11 +161,88 @@ export function renderAdmin(tab = currentTab) {
           </div>`).join('')}
       </div>`;
   }
+
+  else if (tab === 'logs') {
+    const logs = state.tripLogs;
+    if (!logs.length) {
+      c.innerHTML = '<div class="empty-admin"><div class="icon">📋</div><p>No trip logs recorded yet</p></div>';
+      return;
+    }
+
+    // Overall stats
+    const totalMiles = logs.reduce((s, l) => s + (l.distanceMiles || 0), 0);
+    const totalMinutes = logs.reduce((s, l) => s + (l.transitMinutes || 0), 0);
+    const completedTrips = logs.filter(l => l.status === 'dispatched').length;
+
+    // Group by driver
+    const byDriver = {};
+    logs.forEach(l => {
+      const key = l.driver_name || l.driver_uid;
+      (byDriver[key] ||= []).push(l);
+    });
+
+    const fmtDur = (m) => {
+      if (!m) return '0m';
+      const h = Math.floor(m / 60);
+      const min = m % 60;
+      return h > 0 ? `${h}h ${min}m` : `${min}m`;
+    };
+
+    c.innerHTML = `
+      <div style="padding:16px;">
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px;">
+          <div class="astat"><span class="anum">${logs.length}</span><div class="albl">Total Trips</div></div>
+          <div class="astat"><span class="anum" style="color:var(--ok)">${completedTrips}</span><div class="albl">Completed</div></div>
+          <div class="astat"><span class="anum" style="color:var(--accent)">${totalMiles.toFixed(1)}</span><div class="albl">Total Miles</div></div>
+          <div class="astat"><span class="anum" style="color:var(--accent2)">${fmtDur(totalMinutes)}</span><div class="albl">Total Transit</div></div>
+        </div>
+
+        ${Object.entries(byDriver).sort((a, b) => b[1].length - a[1].length).map(([driverName, driverLogs]) => {
+          const dMiles = driverLogs.reduce((s, l) => s + (l.distanceMiles || 0), 0);
+          const dMinutes = driverLogs.reduce((s, l) => s + (l.transitMinutes || 0), 0);
+          const dCompleted = driverLogs.filter(l => l.status === 'dispatched').length;
+
+          return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;margin-bottom:12px;overflow:hidden;">
+            <div style="padding:14px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
+              <div>
+                <div style="font-size:14px;font-weight:700;">${driverName}</div>
+                <div style="font-size:10px;color:var(--muted);">${driverLogs.length} trips · ${dMiles.toFixed(1)} mi · ${fmtDur(dMinutes)}</div>
+              </div>
+              <span style="font-size:11px;font-weight:600;color:var(--ok);">${dCompleted}/${driverLogs.length} done</span>
+            </div>
+            <div style="max-height:300px;overflow-y:auto;">
+              ${driverLogs.map(l => {
+                const statusColors = { active: 'var(--accent2)', confirmed: 'var(--blue)', dispatched: 'var(--ok)' };
+                const statusLabels = { active: '📍 Active', confirmed: '🚛 In Truck', dispatched: '✅ Complete' };
+                const color = statusColors[l.status] || 'var(--muted)';
+                const activeDate = l.activeTime ? new Date(l.activeTime) : null;
+                const dateStr = activeDate ? activeDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
+                const timeStr = activeDate ? activeDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : '';
+
+                return `<div style="padding:10px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;">
+                  <div>
+                    <div style="display:flex;align-items:center;gap:8px;">
+                      <span style="font-family:'Space Mono',monospace;font-size:11px;color:${color};">${l.load_id}</span>
+                      <span style="font-size:9px;padding:2px 7px;border-radius:20px;background:${color}22;color:${color};font-weight:600;">${statusLabels[l.status] || l.status}</span>
+                    </div>
+                    <div style="font-size:10px;color:var(--muted);margin-top:2px;">${dateStr} ${timeStr} · ${l.route || ''}</div>
+                  </div>
+                  <div style="text-align:right;">
+                    <div style="font-family:'Space Mono',monospace;font-size:12px;font-weight:700;color:var(--accent);">${(l.distanceMiles || 0).toFixed(1)} mi</div>
+                    <div style="font-size:10px;color:var(--accent2);">${fmtDur(l.transitMinutes || 0)}</div>
+                  </div>
+                </div>`;
+              }).join('')}
+            </div>
+          </div>`;
+        }).join('')}
+      </div>`;
+  }
 }
 
 export function wireAdminEvents() {
   document.querySelectorAll('.atab').forEach((t, i) => {
-    t.addEventListener('click', () => renderAdmin(['overview','drivers','gas'][i]));
+    t.addEventListener('click', () => renderAdmin(['overview','drivers','gas','logs'][i]));
   });
 
   document.getElementById('adminContent').addEventListener('click', async (e) => {

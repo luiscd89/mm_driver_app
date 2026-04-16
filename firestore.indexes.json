@@ -16,6 +16,22 @@
         { "fieldPath": "createdAt", "order": "DESCENDING" }
       ]
     }
+    ,{
+      "collectionGroup": "tripLogs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "driver_uid", "order": "ASCENDING" },
+        { "fieldPath": "activeTime", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "tripLogs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "driver_uid", "order": "ASCENDING" },
+        { "fieldPath": "weekStart", "order": "DESCENDING" }
+      ]
+    }
   ],
   "fieldOverrides": []
 }
