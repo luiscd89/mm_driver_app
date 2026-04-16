@@ -1,0 +1,21 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "routes",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "driver_uid", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "gasReceipts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "driver_uid", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

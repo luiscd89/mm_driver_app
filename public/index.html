@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>MTN Driver App</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+
+<!-- ═══ LOGIN ═══ -->
+<div class="screen active" id="loginScreen">
+  <div class="login-box">
+    <div class="login-logo">
+      <div class="icon">🚛</div>
+      <h1>MTN DRIVER</h1>
+      <p>Operations Platform</p>
+    </div>
+    <form id="loginForm">
+      <label class="login-label">Email</label>
+      <input class="login-input" type="email" id="loginEmail" autocomplete="username" required>
+      <label class="login-label">Password</label>
+      <input class="login-input" type="password" id="loginPassword" autocomplete="current-password" required>
+      <button class="login-btn" type="submit">Start My Shift →</button>
+    </form>
+    <div class="admin-link">Admins sign in with the same form — role decides the view.</div>
+  </div>
+</div>
+
+<!-- ═══ DRIVER APP ═══ -->
+<div class="screen" id="driverScreen">
+  <div class="driver-header">
+    <div>
+      <div class="driver-name" id="driverNameHeader">—</div>
+      <div class="driver-date" id="driverDateHeader">—</div>
+    </div>
+    <div class="header-actions">
+      <button class="logout-btn" id="logoutBtn">← Exit</button>
+    </div>
+  </div>
+
+  <div class="status-bar">
+    <div class="status-cell"><span class="sval" id="statTotal">0</span><div class="slbl">Routes</div></div>
+    <div class="status-cell"><span class="sval" id="statDone">0</span><div class="slbl">Dispatched</div></div>
+    <div class="status-cell"><span class="sval" id="statNext">—</span><div class="slbl">Next Pickup</div></div>
+  </div>
+
+  <div class="driver-tabs">
+    <button class="dtab active">📋 My Routes</button>
+    <button class="dtab">⛽ Gas Receipt</button>
+  </div>
+
+  <div id="driverRoutesTab" style="flex:1;overflow-y:auto;padding:16px;display:block;" class="routes-content"></div>
+  <div id="driverGasTab" style="flex:1;overflow-y:auto;display:none;" class="gas-content">
+    <div id="notifBanner" class="notif-banner" style="display:none;">
+      <span>🔔 Enable notifications to get 10-min trip alerts</span>
+      <button id="notifEnable">Enable</button>
+    </div>
+    <div class="gas-upload-box">
+      <div class="icon">📸</div>
+      <h3>Upload Gas Receipt</h3>
+      <p>Take a photo or upload your receipt image</p>
+      <label class="gas-file-btn" for="gasFileInput">📷 Take / Choose Photo</label>
+      <input type="file" id="gasFileInput" accept="image/*" capture="environment">
+    </div>
+    <div class="gas-form" id="gasForm" style="display:none;">
+      <img id="gasPreview" class="gas-preview">
+      <label>Amount Paid ($)</label>
+      <input class="gas-input" type="number" id="gasAmount" placeholder="e.g. 87.50" step="0.01">
+      <label>Load ID (which route)</label>
+      <input class="gas-input" type="text" id="gasLoadId" placeholder="e.g. 113BNXJ85">
+      <label>Notes (optional)</label>
+      <input class="gas-input" type="text" id="gasNotes" placeholder="Station name, pump #, etc">
+      <button class="gas-submit" id="gasSubmit" type="button">✅ Submit Receipt</button>
+    </div>
+    <div class="gas-history" id="gasHistoryDiv">
+      <h3>My Recent Receipts</h3>
+      <div id="gasHistoryList"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ ADMIN ═══ -->
+<div class="screen" id="adminScreen">
+  <div class="admin-header">
+    <h1>🛠 ADMIN PANEL</h1>
+    <button class="logout-btn" id="logoutBtnAdmin" onclick="location.reload()">← Back</button>
+  </div>
+  <div class="admin-tabs">
+    <button class="atab active">📊 Overview</button>
+    <button class="atab">🚛 Drivers</button>
+    <button class="atab">⛽ Gas <span class="abadge" id="gasCount">0</span></button>
+  </div>
+  <div class="admin-content" id="adminContent"></div>
+</div>
+
+<!-- TOAST -->
+<div class="toast-wrap" id="toastWrap"></div>
+
+<script type="module" src="/js/main.js"></script>
+</body>
+</html>
