@@ -4,3 +4,5 @@ functions/service-account.json
 *.log
 .firebase/
 .DS_Store
+.claude/
+*.xlsx

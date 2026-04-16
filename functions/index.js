@@ -164,3 +164,202 @@ exports.resetDailyFlags = onSchedule(
     await batch.commit();
   }
 );
+
+// ─────────────────────────────────────────────────────────────
+// Sync routes from a published Google Sheet (CSV).
+// ─────────────────────────────────────────────────────────────
+
+function parseCSV(text) {
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  if (!lines.length) return [];
+  const headers = splitCSVLine(lines[0]);
+  return lines.slice(1).map(line => {
+    const vals = splitCSVLine(line);
+    const obj = {};
+    headers.forEach((h, i) => { obj[h] = vals[i] || ''; });
+    return obj;
+  });
+}
+
+function splitCSVLine(line) {
+  const result = [];
+  let cur = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++; }
+      else if (ch === '"') { inQuotes = false; }
+      else { cur += ch; }
+    } else {
+      if (ch === '"') { inQuotes = true; }
+      else if (ch === ',') { result.push(cur); cur = ''; }
+      else { cur += ch; }
+    }
+  }
+  result.push(cur);
+  return result;
+}
+
+function normalizeTime(raw) {
+  if (!raw || !raw.trim()) return null;
+  const s = raw.trim();
+  // HH:MM or H:MM 24-hour
+  if (/^\d{1,2}:\d{2}$/.test(s)) {
+    const [h, m] = s.split(':');
+    return `${h.padStart(2, '0')}:${m}`;
+  }
+  // 12-hour with AM/PM
+  const ampm = s.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (ampm) {
+    let h = parseInt(ampm[1], 10);
+    const m = ampm[2];
+    const period = ampm[3].toUpperCase();
+    if (period === 'PM' && h !== 12) h += 12;
+    if (period === 'AM' && h === 12) h = 0;
+    return `${String(h).padStart(2, '0')}:${m}`;
+  }
+  // Excel fractional day (e.g. 0.75 = 18:00)
+  const num = parseFloat(s);
+  if (!isNaN(num) && num >= 0 && num < 1) {
+    const totalMin = Math.round(num * 1440);
+    const h = Math.floor(totalMin / 60) % 24;
+    const m = totalMin % 60;
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  }
+  return s; // return as-is if unrecognized
+}
+
+function normalizeDate(raw) {
+  if (!raw || !raw.trim()) return null;
+  const s = raw.trim();
+  // Already YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  // MM/DD/YYYY
+  const mdy = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (mdy) {
+    return `${mdy[3]}-${mdy[1].padStart(2, '0')}-${mdy[2].padStart(2, '0')}`;
+  }
+  // Try Date parse
+  const d = new Date(s);
+  if (!isNaN(d.getTime())) {
+    return d.toISOString().slice(0, 10);
+  }
+  return null;
+}
+
+exports.syncFromSheet = onCall({ timeoutSeconds: 120 }, async (req) => {
+  if (!req.auth || req.auth.token.role !== 'admin') {
+    throw new HttpsError('permission-denied', 'Admin only.');
+  }
+
+  const { sheetUrl } = req.data || {};
+  if (!sheetUrl) {
+    throw new HttpsError('invalid-argument', 'sheetUrl is required.');
+  }
+
+  // Fetch CSV
+  let csvText;
+  try {
+    const resp = await fetch(sheetUrl);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    csvText = await resp.text();
+  } catch (err) {
+    throw new HttpsError('unavailable', `Failed to fetch sheet: ${err.message}`);
+  }
+
+  const rows = parseCSV(csvText);
+  if (!rows.length) {
+    return { total: 0, created: 0, updated: 0, skipped: 0, unmatchedDrivers: [] };
+  }
+
+  // Build driver name → uid lookup
+  const driversSnap = await db.collection('drivers').get();
+  const driverMap = new Map();
+  driversSnap.forEach(doc => {
+    const d = doc.data();
+    if (d.name)  driverMap.set(d.name.trim().toLowerCase(), doc.id);
+    if (d.email) driverMap.set(d.email.trim().toLowerCase(), doc.id);
+  });
+
+  const stopTimeCols = [
+    'Stop 1 Planned Arrival Time', 'Stop 2 Planned Arrival Time',
+    'Stop 3 Planned Arrival Time', 'Stop 4 Planned Arrival Time',
+    'Stop 5 Planned Arrival Time', 'Stop 6 Planned Arrival Time',
+    'Stop 7 Planned Arrival Time', 'Stop 8 Planned Arrival Time'
+  ];
+
+  let created = 0, updated = 0, skipped = 0;
+  const unmatchedDrivers = new Set();
+  const batches = [];
+  let batch = db.batch();
+  let batchCount = 0;
+
+  // Check which load_ids already exist
+  const existingIds = new Set();
+  const existingSnap = await db.collection('routes').select().get();
+  existingSnap.forEach(doc => existingIds.add(doc.id));
+
+  for (const row of rows) {
+    const loadId = (row['Load ID'] || '').trim();
+    if (!loadId) { skipped++; continue; }
+
+    const driverName = (row['Driver Name'] || '').trim();
+    const driverKey = driverName.toLowerCase();
+    const driverUid = driverMap.get(driverKey) || null;
+    if (driverName && !driverUid) unmatchedDrivers.add(driverName);
+
+    const facilities = (row['Facility Sequence'] || '').split('->').map(f => f.trim()).filter(Boolean);
+    const stops = facilities.map((facility, i) => ({
+      facility,
+      time: normalizeTime(row[stopTimeCols[i]] || '')
+    }));
+
+    const routeDoc = {
+      load_id:     loadId,
+      driver_uid:  driverUid,
+      driver_name: driverName || null,
+      date:        normalizeDate(row['Stop 1 Planned Arrival Date']),
+      route:       (row['Facility Sequence'] || '').trim(),
+      shipper:     (row['Shipper Account'] || '').trim() || null,
+      distance:    parseFloat(row['Estimate Distance']) || 0,
+      stops,
+      meta: {
+        block_id:       (row['Block ID'] || '').trim() || null,
+        trip_id:        (row['Trip ID'] || '').trim() || null,
+        scac:           (row['SCAC'] || '').trim() || null,
+        equipment_type: (row['Equipment Type'] || '').trim() || null,
+        rate_type:      (row['Rate Type'] || '').trim() || null,
+        estimated_cost: (row['Estimated Cost'] || '').trim() || null,
+        currency:       (row['Currency'] || '').trim() || null
+      }
+    };
+
+    const ref = db.collection('routes').doc(loadId);
+    if (existingIds.has(loadId)) {
+      batch.set(ref, routeDoc, { merge: true });
+      updated++;
+    } else {
+      batch.set(ref, { ...routeDoc, confirmed: false, dispatched: false, notified10min: false });
+      created++;
+    }
+
+    batchCount++;
+    if (batchCount >= 499) {
+      batches.push(batch);
+      batch = db.batch();
+      batchCount = 0;
+    }
+  }
+
+  batches.push(batch);
+  await Promise.all(batches.map(b => b.commit()));
+
+  return {
+    total: rows.length,
+    created,
+    updated,
+    skipped,
+    unmatchedDrivers: [...unmatchedDrivers]
+  };
+});

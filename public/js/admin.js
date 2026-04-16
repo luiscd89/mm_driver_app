@@ -5,6 +5,7 @@ import { httpsCallable }
   from "https://www.gstatic.com/firebasejs/10.13.2/firebase-functions.js";
 
 const sendAdminAlert = httpsCallable(functions, 'sendAdminAlert');
+const syncFromSheet  = httpsCallable(functions, 'syncFromSheet');
 
 let currentTab = 'overview';
 
@@ -29,6 +30,12 @@ export function renderAdmin(tab = currentTab) {
     const gasTotal        = gas.reduce((s, r) => s + parseFloat(r.amount || 0), 0);
 
     c.innerHTML = `
+      <div style="padding:16px;border-bottom:1px solid var(--border);">
+        <div style="font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin-bottom:10px;">Google Sheet Sync</div>
+        <input type="text" id="sheetUrlInput" class="gas-input" placeholder="Paste published Google Sheet CSV URL or sharing link" style="margin-bottom:10px;font-size:12px;">
+        <button id="syncSheetBtn" style="width:100%;padding:12px;border-radius:10px;border:none;background:var(--blue);color:#fff;font-size:14px;font-weight:600;cursor:pointer;">🔄 Sync Routes from Sheet</button>
+        <div id="syncStatus" style="display:none;margin-top:10px;padding:12px;border-radius:8px;font-size:12px;"></div>
+      </div>
       <div class="admin-stats">
         <div class="astat"><span class="anum">${drivers.length}</span><div class="albl">Total Drivers</div></div>
         <div class="astat"><span class="anum" style="color:var(--ok)">${dispatchedCount}</span><div class="albl">Dispatched</div></div>
@@ -120,6 +127,51 @@ export function wireAdminEvents() {
   });
 
   document.getElementById('adminContent').addEventListener('click', async (e) => {
+    // Sync button
+    if (e.target.id === 'syncSheetBtn') {
+      const urlInput = document.getElementById('sheetUrlInput');
+      const status   = document.getElementById('syncStatus');
+      const rawUrl   = (urlInput?.value || '').trim();
+      if (!rawUrl) { toast('Paste a Google Sheet URL first', 'warn'); return; }
+
+      // Convert sharing/edit links to published CSV export URL
+      let sheetUrl = rawUrl;
+      const idMatch = rawUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
+      if (idMatch && !rawUrl.includes('/pub?')) {
+        sheetUrl = `https://docs.google.com/spreadsheets/d/${idMatch[1]}/gviz/tq?tqx=out:csv&sheet=MTN`;
+      }
+
+      e.target.disabled = true;
+      e.target.textContent = '⏳ Syncing...';
+      status.style.display = 'block';
+      status.style.background = 'var(--surface2)';
+      status.style.color = 'var(--text2)';
+      status.textContent = 'Fetching and syncing routes, please wait...';
+
+      try {
+        const res = await syncFromSheet({ sheetUrl });
+        const d = res.data;
+        status.style.background = 'rgba(16,185,129,0.1)';
+        status.style.color = 'var(--ok)';
+        let msg = `Synced ${d.total} routes: ${d.created} created, ${d.updated} updated, ${d.skipped} skipped.`;
+        if (d.unmatchedDrivers?.length) {
+          msg += ` Unmatched drivers: ${d.unmatchedDrivers.join(', ')}`;
+        }
+        status.textContent = msg;
+        toast('Routes synced!', 'success');
+      } catch (err) {
+        status.style.background = 'rgba(239,68,68,0.1)';
+        status.style.color = 'var(--danger)';
+        status.textContent = 'Sync failed: ' + (err.message || err);
+        toast('Sync failed', 'alert');
+      } finally {
+        e.target.disabled = false;
+        e.target.textContent = '🔄 Sync Routes from Sheet';
+      }
+      return;
+    }
+
+    // Alert button
     const btn = e.target.closest('[data-alert-uid]');
     if (!btn) return;
     try {
