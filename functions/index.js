@@ -10,7 +10,7 @@
 
 const { onSchedule }        = require('firebase-functions/v2/scheduler');
 const { onCall, HttpsError } = require('firebase-functions/v2/https');
-const { onDocumentCreated } = require('firebase-functions/v2/firestore');
+const { onDocumentCreated, onDocumentUpdated } = require('firebase-functions/v2/firestore');
 const functionsV1           = require('firebase-functions/v1');
 const admin                 = require('firebase-admin');
 
@@ -164,6 +164,82 @@ exports.resetDailyFlags = onSchedule(
     await batch.commit();
   }
 );
+
+// ─────────────────────────────────────────────────────────────
+// WhatsApp alerts on route status changes.
+// ─────────────────────────────────────────────────────────────
+async function sendWhatsAppAlert(message) {
+  const settingsDoc = await db.collection('settings').doc('whatsapp').get();
+  if (!settingsDoc.exists) return;
+  const cfg = settingsDoc.data();
+  if (!cfg.enabled) return;
+
+  // Support multiple webhook services
+  if (cfg.provider === 'callmebot') {
+    // CallMeBot: one request per phone number in the group
+    const phones = cfg.phones || [];
+    for (const phone of phones) {
+      try {
+        const url = `https://api.callmebot.com/whatsapp.php?phone=${encodeURIComponent(phone.number)}&text=${encodeURIComponent(message)}&apikey=${encodeURIComponent(phone.apikey)}`;
+        await fetch(url);
+      } catch (e) { console.warn('CallMeBot failed for', phone.number, e.message); }
+    }
+  } else if (cfg.provider === 'webhook') {
+    // Generic webhook (works with Make.com, Zapier, n8n, etc.)
+    try {
+      await fetch(cfg.webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message, timestamp: new Date().toISOString() })
+      });
+    } catch (e) { console.warn('Webhook failed:', e.message); }
+  } else if (cfg.provider === 'meta') {
+    // Meta WhatsApp Business Cloud API
+    const { phoneNumberId, accessToken, recipientNumbers } = cfg;
+    for (const to of (recipientNumbers || [])) {
+      try {
+        await fetch(`https://graph.facebook.com/v19.0/${phoneNumberId}/messages`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            messaging_product: 'whatsapp',
+            to,
+            type: 'text',
+            text: { body: message }
+          })
+        });
+      } catch (e) { console.warn('Meta WA failed for', to, e.message); }
+    }
+  }
+}
+
+exports.onRouteStatusChange = onDocumentUpdated('routes/{loadId}', async (event) => {
+  const before = event.data.before.data();
+  const after = event.data.after.data();
+  const loadId = event.params.loadId;
+  const driver = after.driver_name || 'Unknown Driver';
+  const route = after.route || '';
+
+  // Detect status transitions
+  if (!before.active && after.active) {
+    await sendWhatsAppAlert(
+      `📍 *DRIVER ACTIVE*\n\n👤 ${driver}\n🚛 Load: ${loadId}\n📦 Route: ${route}\n⏰ ${new Date().toLocaleTimeString('en-US', { timeZone: 'America/New_York' })}\n\n_Driver is on the way to the truck_`
+    );
+  }
+  if (!before.confirmed && after.confirmed) {
+    await sendWhatsAppAlert(
+      `🚛 *IN TRUCK*\n\n👤 ${driver}\n🚛 Load: ${loadId}\n📦 Route: ${route}\n⏰ ${new Date().toLocaleTimeString('en-US', { timeZone: 'America/New_York' })}\n\n_Driver confirmed in truck and ready_`
+    );
+  }
+  if (!before.dispatched && after.dispatched) {
+    await sendWhatsAppAlert(
+      `🚦 *DISPATCHED*\n\n👤 ${driver}\n🚛 Load: ${loadId}\n📦 Route: ${route}\n⏰ ${new Date().toLocaleTimeString('en-US', { timeZone: 'America/New_York' })}\n\n_Driver dispatched — route in progress_`
+    );
+  }
+});
 
 // ─────────────────────────────────────────────────────────────
 // Sync routes from a published Google Sheet (CSV).

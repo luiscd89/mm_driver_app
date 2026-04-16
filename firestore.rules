@@ -19,6 +19,10 @@ service cloud.firestore {
       allow write:  if isSelf(uid);
     }
 
+    match /settings/{docId} {
+      allow read, write: if isAdmin();
+    }
+
     match /tripLogs/{logId} {
       allow read:   if isAdmin() ||
         (isSignedIn() && resource.data.driver_uid == request.auth.uid);

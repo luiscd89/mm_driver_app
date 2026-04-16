@@ -3,6 +3,8 @@ import { functions, db } from "./firebase-config.js";
 import { toast } from "./toast.js";
 import { httpsCallable }
   from "https://www.gstatic.com/firebasejs/10.13.2/firebase-functions.js";
+import { doc, getDoc, setDoc }
+  from "https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js";
 
 const sendAdminAlert = httpsCallable(functions, 'sendAdminAlert');
 const syncFromSheet  = httpsCallable(functions, 'syncFromSheet');
@@ -13,7 +15,7 @@ let previousActiveDrivers = new Set();
 export function renderAdmin(tab = currentTab) {
   currentTab = tab;
   document.querySelectorAll('.atab').forEach((t, i) =>
-    t.classList.toggle('active', ['overview','drivers','gas','logs'][i] === tab));
+    t.classList.toggle('active', ['overview','drivers','gas','logs','settings'][i] === tab));
 
   const c = document.getElementById('adminContent');
   document.getElementById('gasCount').textContent = state.gasReceipts.length;
@@ -245,14 +247,144 @@ export function renderAdmin(tab = currentTab) {
         }).join('')}
       </div>`;
   }
+
+  else if (tab === 'settings') {
+    // Load WhatsApp settings async
+    c.innerHTML = '<div style="padding:16px;text-align:center;color:var(--muted);">Loading settings...</div>';
+    loadWhatsAppSettings(c);
+  }
+}
+
+async function loadWhatsAppSettings(c) {
+  let cfg = { enabled: false, provider: 'callmebot', phones: [], webhookUrl: '', phoneNumberId: '', accessToken: '', recipientNumbers: [] };
+  try {
+    const snap = await getDoc(doc(db, 'settings', 'whatsapp'));
+    if (snap.exists()) cfg = { ...cfg, ...snap.data() };
+  } catch {}
+
+  const phonesJson = (cfg.phones || []).map(p => `${p.number}:${p.apikey}`).join('\n');
+  const recipientsStr = (cfg.recipientNumbers || []).join(', ');
+
+  c.innerHTML = `
+    <div style="padding:16px;">
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin-bottom:12px;">WhatsApp Alerts</div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:16px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+          <label style="font-size:13px;font-weight:600;">Enable WhatsApp Alerts</label>
+          <label style="position:relative;display:inline-block;width:44px;height:24px;">
+            <input type="checkbox" id="waEnabled" ${cfg.enabled ? 'checked' : ''} style="opacity:0;width:0;height:0;">
+            <span style="position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:${cfg.enabled ? 'var(--accent)' : 'var(--border)'};border-radius:24px;transition:.3s;"></span>
+            <span style="position:absolute;content:'';height:18px;width:18px;left:3px;bottom:3px;background:white;border-radius:50%;transition:.3s;${cfg.enabled ? 'transform:translateX(20px);' : ''}"></span>
+          </label>
+        </div>
+
+        <label class="login-label">Provider</label>
+        <select id="waProvider" class="login-input" style="margin-bottom:12px;padding:10px;">
+          <option value="callmebot" ${cfg.provider==='callmebot'?'selected':''}>CallMeBot (Free — individual numbers)</option>
+          <option value="webhook" ${cfg.provider==='webhook'?'selected':''}>Webhook (Make.com, Zapier, n8n)</option>
+          <option value="meta" ${cfg.provider==='meta'?'selected':''}>Meta WhatsApp Business API</option>
+        </select>
+
+        <div id="waCallmebotFields" style="display:${cfg.provider==='callmebot'?'block':'none'};">
+          <label class="login-label">Phone Numbers (one per line: number:apikey)</label>
+          <textarea id="waPhones" class="login-input" rows="4" style="resize:vertical;font-size:11px;" placeholder="15551234567:123456\n15559876543:654321">${phonesJson}</textarea>
+          <div style="font-size:10px;color:var(--muted);margin-bottom:12px;">Get your API key: send "I allow callmebot to send me messages" to +34 644 71 98 35 on WhatsApp</div>
+        </div>
+
+        <div id="waWebhookFields" style="display:${cfg.provider==='webhook'?'block':'none'};">
+          <label class="login-label">Webhook URL</label>
+          <input id="waWebhookUrl" class="login-input" type="text" placeholder="https://hook.us1.make.com/..." value="${cfg.webhookUrl || ''}">
+        </div>
+
+        <div id="waMetaFields" style="display:${cfg.provider==='meta'?'block':'none'};">
+          <label class="login-label">Phone Number ID</label>
+          <input id="waPhoneNumberId" class="login-input" type="text" placeholder="From Meta Business Dashboard" value="${cfg.phoneNumberId || ''}">
+          <label class="login-label">Access Token</label>
+          <input id="waAccessToken" class="login-input" type="password" placeholder="Meta API token" value="${cfg.accessToken || ''}">
+          <label class="login-label">Recipient Numbers (comma-separated with country code)</label>
+          <input id="waRecipients" class="login-input" type="text" placeholder="15551234567, 15559876543" value="${recipientsStr}">
+        </div>
+
+        <button id="waSaveBtn" style="width:100%;padding:12px;border-radius:10px;border:none;background:var(--accent);color:#000;font-size:14px;font-weight:600;cursor:pointer;margin-top:8px;">Save WhatsApp Settings</button>
+        <button id="waTestBtn" style="width:100%;padding:10px;border-radius:10px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:12px;font-weight:600;cursor:pointer;margin-top:8px;">Send Test Message</button>
+      </div>
+
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;">
+        <div style="font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin-bottom:8px;">How It Works</div>
+        <div style="font-size:12px;color:var(--text2);line-height:1.6;">
+          When a driver hits <b>Active</b>, <b>Confirm</b>, or <b>Dispatch</b>, a WhatsApp message is automatically sent with the driver name, load ID, route, and timestamp.<br><br>
+          <b>CallMeBot</b> — Free, each admin adds their number. <a href="https://www.callmebot.com/blog/free-api-whatsapp-messages/" target="_blank" style="color:var(--accent);">Setup guide</a><br>
+          <b>Webhook</b> — Use Make.com or Zapier to forward to WhatsApp group.<br>
+          <b>Meta API</b> — Official WhatsApp Business API for high volume.
+        </div>
+      </div>
+    </div>`;
 }
 
 export function wireAdminEvents() {
   document.querySelectorAll('.atab').forEach((t, i) => {
-    t.addEventListener('click', () => renderAdmin(['overview','drivers','gas','logs'][i]));
+    t.addEventListener('click', () => renderAdmin(['overview','drivers','gas','logs','settings'][i]));
+  });
+
+  document.getElementById('adminContent').addEventListener('change', (e) => {
+    // WhatsApp provider toggle
+    if (e.target.id === 'waProvider') {
+      const v = e.target.value;
+      const cb = document.getElementById('waCallmebotFields');
+      const wh = document.getElementById('waWebhookFields');
+      const mt = document.getElementById('waMetaFields');
+      if (cb) cb.style.display = v === 'callmebot' ? 'block' : 'none';
+      if (wh) wh.style.display = v === 'webhook' ? 'block' : 'none';
+      if (mt) mt.style.display = v === 'meta' ? 'block' : 'none';
+    }
   });
 
   document.getElementById('adminContent').addEventListener('click', async (e) => {
+    // WhatsApp save
+    if (e.target.id === 'waSaveBtn') {
+      const provider = document.getElementById('waProvider')?.value || 'callmebot';
+      const enabled = document.getElementById('waEnabled')?.checked || false;
+      const cfg = { enabled, provider };
+
+      if (provider === 'callmebot') {
+        const raw = (document.getElementById('waPhones')?.value || '').trim();
+        cfg.phones = raw.split('\n').filter(Boolean).map(line => {
+          const [number, apikey] = line.split(':');
+          return { number: (number || '').trim(), apikey: (apikey || '').trim() };
+        });
+      } else if (provider === 'webhook') {
+        cfg.webhookUrl = (document.getElementById('waWebhookUrl')?.value || '').trim();
+      } else if (provider === 'meta') {
+        cfg.phoneNumberId = (document.getElementById('waPhoneNumberId')?.value || '').trim();
+        cfg.accessToken = (document.getElementById('waAccessToken')?.value || '').trim();
+        cfg.recipientNumbers = (document.getElementById('waRecipients')?.value || '').split(',').map(s => s.trim()).filter(Boolean);
+      }
+
+      try {
+        await setDoc(doc(db, 'settings', 'whatsapp'), cfg);
+        toast('WhatsApp settings saved!', 'success');
+      } catch (err) {
+        toast('Failed to save: ' + err.message, 'alert');
+      }
+      return;
+    }
+
+    // WhatsApp test
+    if (e.target.id === 'waTestBtn') {
+      e.target.disabled = true;
+      e.target.textContent = 'Sending...';
+      try {
+        // Trigger test by saving a temp flag
+        await setDoc(doc(db, 'settings', 'whatsapp'), { lastTest: new Date().toISOString() }, { merge: true });
+        toast('Settings saved. Test a real alert by having a driver hit Active.', 'info');
+      } catch (err) {
+        toast('Failed: ' + err.message, 'alert');
+      }
+      e.target.disabled = false;
+      e.target.textContent = 'Send Test Message';
+      return;
+    }
+
     // Sync button
     if (e.target.id === 'syncSheetBtn') {
       const urlInput = document.getElementById('sheetUrlInput');
