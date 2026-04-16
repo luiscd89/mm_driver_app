@@ -26,12 +26,20 @@ export function onAuth(cb) {
   });
 }
 
+function resolveEmail(input) {
+  const v = input.trim();
+  if (v.includes('@')) return v;
+  // Admin shorthand
+  if (v === 'aitruckingmm') return 'aitruckingmm@gmail.com';
+  return v + '@mtndriver.com';
+}
+
 export async function login(email, password) {
-  await signInWithEmailAndPassword(auth, email.trim(), password);
+  await signInWithEmailAndPassword(auth, resolveEmail(email), password);
 }
 
 export async function register(email, password) {
-  await createUserWithEmailAndPassword(auth, email.trim(), password);
+  await createUserWithEmailAndPassword(auth, resolveEmail(email), password);
 }
 
 export async function logout() {
