@@ -1,5 +1,5 @@
 import { state } from "./state.js";
-import { functions } from "./firebase-config.js";
+import { functions, db } from "./firebase-config.js";
 import { toast } from "./toast.js";
 import { httpsCallable }
   from "https://www.gstatic.com/firebasejs/10.13.2/firebase-functions.js";
@@ -8,6 +8,7 @@ const sendAdminAlert = httpsCallable(functions, 'sendAdminAlert');
 const syncFromSheet  = httpsCallable(functions, 'syncFromSheet');
 
 let currentTab = 'overview';
+let previousActiveDrivers = new Set();
 
 export function renderAdmin(tab = currentTab) {
   currentTab = tab;
@@ -24,9 +25,34 @@ export function renderAdmin(tab = currentTab) {
   const routesByUid = {};
   routes.forEach(r => { (routesByUid[r.driver_uid] ||= []).push(r); });
 
+  // Detect newly active drivers and alert admin
+  const currentActiveDrivers = new Set();
+  routes.forEach(r => { if (r.active && !r.dispatched) currentActiveDrivers.add(r.driver_uid); });
+  currentActiveDrivers.forEach(uid => {
+    if (!previousActiveDrivers.has(uid)) {
+      const d = drivers.find(x => x.uid === uid);
+      if (d) toast(`📍 ${d.name || d.email} is now ACTIVE and on the way!`, 'alert');
+    }
+  });
+  previousActiveDrivers = currentActiveDrivers;
+
+  // Sort drivers: active first, then confirmed, then dispatched, then idle
+  function driverSortKey(d) {
+    const myRoutes = routesByUid[d.uid] || [];
+    const hasActive = myRoutes.some(r => r.active && !r.confirmed && !r.dispatched);
+    const hasConfirmed = myRoutes.some(r => r.confirmed && !r.dispatched);
+    const hasDispatched = myRoutes.some(r => r.dispatched);
+    if (hasActive) return 0;
+    if (hasConfirmed) return 1;
+    if (hasDispatched) return 2;
+    return 3;
+  }
+  const sortedDrivers = [...drivers].sort((a, b) => driverSortKey(a) - driverSortKey(b));
+
   if (tab === 'overview') {
     const dispatchedCount = routes.filter(r => r.dispatched).length;
     const confirmedCount  = routes.filter(r => r.confirmed && !r.dispatched).length;
+    const activeCount     = routes.filter(r => r.active && !r.confirmed && !r.dispatched).length;
     const gasTotal        = gas.reduce((s, r) => s + parseFloat(r.amount || 0), 0);
 
     c.innerHTML = `
@@ -38,22 +64,28 @@ export function renderAdmin(tab = currentTab) {
       </div>
       <div class="admin-stats">
         <div class="astat"><span class="anum">${drivers.length}</span><div class="albl">Total Drivers</div></div>
-        <div class="astat"><span class="anum" style="color:var(--ok)">${dispatchedCount}</span><div class="albl">Dispatched</div></div>
+        <div class="astat"><span class="anum" style="color:var(--accent2)">${activeCount}</span><div class="albl">Active</div></div>
         <div class="astat"><span class="anum" style="color:var(--blue)">${confirmedCount}</span><div class="albl">In Truck</div></div>
-        <div class="astat"><span class="anum" style="color:var(--accent2)">$${gasTotal.toFixed(0)}</span><div class="albl">Gas Spent</div></div>
+        <div class="astat"><span class="anum" style="color:var(--ok)">${dispatchedCount}</span><div class="albl">Dispatched</div></div>
       </div>
       <div style="padding:0 16px 16px">
         <div style="font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin-bottom:10px;">Driver Quick Status</div>
-        ${drivers.map(d => {
+        ${sortedDrivers.map(d => {
           const myRoutes = routesByUid[d.uid] || [];
           const myDispatched = myRoutes.filter(r => r.dispatched).length;
           const myConfirmed  = myRoutes.filter(r => r.confirmed && !r.dispatched).length;
-          const badge = myDispatched > 0 ? 'dispatched' : myConfirmed > 0 ? 'active' : 'idle';
-          const badgeLabel = myDispatched > 0 ? '🚦 Dispatched' : myConfirmed > 0 ? '🚛 In Truck' : '⚪ Idle';
-          return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;">
+          const myActive     = myRoutes.filter(r => r.active && !r.confirmed && !r.dispatched).length;
+          const badge = myActive > 0 ? 'on-way' : myDispatched > 0 ? 'dispatched' : myConfirmed > 0 ? 'active' : 'idle';
+          const badgeLabel = myActive > 0 ? '📍 On The Way' : myDispatched > 0 ? '🚦 Dispatched' : myConfirmed > 0 ? '🚛 In Truck' : '⚪ Idle';
+          const loc = d.location;
+          const locHtml = loc ? `<a href="https://www.google.com/maps?q=${loc.lat},${loc.lng}" target="_blank" style="font-size:10px;color:var(--accent);text-decoration:none;">📍 View on Map</a>` : '';
+          const locTime = loc?.updatedAt ? `<span style="font-size:9px;color:var(--muted);margin-left:6px;">${new Date(loc.updatedAt).toLocaleTimeString()}</span>` : '';
+          const highlight = myActive > 0 ? 'border-color:var(--accent2);background:rgba(245,158,11,.05);' : '';
+          return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;${highlight}">
             <div>
               <div style="font-size:13px;font-weight:600">${d.name || d.email}</div>
               <div style="font-size:10px;color:var(--muted)">${myRoutes.length} routes · ${myDispatched} dispatched</div>
+              ${locHtml ? `<div style="margin-top:4px;">${locHtml}${locTime}</div>` : ''}
             </div>
             <span class="ds-badge ${badge}">${badgeLabel}</span>
           </div>`;
@@ -62,16 +94,25 @@ export function renderAdmin(tab = currentTab) {
   }
 
   else if (tab === 'drivers') {
-    c.innerHTML = `<div class="driver-status-list">${drivers.map(d => {
+    c.innerHTML = `<div class="driver-status-list">${sortedDrivers.map(d => {
       const myRoutes = routesByUid[d.uid] || [];
       const myDispatched = myRoutes.filter(r => r.dispatched).length;
       const myConfirmed  = myRoutes.filter(r => r.confirmed && !r.dispatched).length;
-      const activeRoute  = myRoutes.find(r => r.confirmed && !r.dispatched);
+      const myActive     = myRoutes.filter(r => r.active && !r.confirmed && !r.dispatched).length;
+      const activeRoute  = myRoutes.find(r => (r.active || r.confirmed) && !r.dispatched);
       const myGas = gas.filter(g => g.driver_uid === d.uid).length;
-      const badge = myDispatched > 0 ? 'dispatched' : myConfirmed > 0 ? 'active' : 'idle';
-      const badgeLabel = myDispatched > 0 ? '🚦 On Route' : myConfirmed > 0 ? '🚛 In Truck' : '⚪ Idle';
+      const badge = myActive > 0 ? 'on-way' : myDispatched > 0 ? 'dispatched' : myConfirmed > 0 ? 'active' : 'idle';
+      const badgeLabel = myActive > 0 ? '📍 On The Way' : myDispatched > 0 ? '🚦 On Route' : myConfirmed > 0 ? '🚛 In Truck' : '⚪ Idle';
+      const loc = d.location;
+      const locHtml = loc ? `<div style="margin-top:8px;background:rgba(0,212,170,.05);border:1px solid rgba(0,212,170,.2);border-radius:8px;padding:8px 10px;font-size:11px;">
+        <div style="color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px">Live Location</div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <a href="https://www.google.com/maps?q=${loc.lat},${loc.lng}" target="_blank" style="color:var(--accent);text-decoration:none;font-weight:600;">📍 Open in Google Maps</a>
+          <span style="font-size:9px;color:var(--muted);">${loc.updatedAt ? new Date(loc.updatedAt).toLocaleTimeString() : ''}</span>
+        </div>
+      </div>` : '';
 
-      return `<div class="ds-card">
+      return `<div class="ds-card" ${myActive > 0 ? 'style="border-color:var(--accent2);box-shadow:0 0 12px rgba(245,158,11,.15);"' : ''}>
         <div class="ds-header">
           <div class="ds-name">${d.name || d.email}</div>
           <span class="ds-badge ${badge}">${badgeLabel}</span>
@@ -87,6 +128,7 @@ export function renderAdmin(tab = currentTab) {
           <div style="font-family:'Space Mono',monospace;color:var(--accent)">${activeRoute.load_id}</div>
           <div style="color:var(--text2)">${activeRoute.route}</div>
         </div>` : ''}
+        ${locHtml}
         <button class="ds-alert-btn" data-alert-uid="${d.uid}" data-alert-name="${d.name || d.email}">🔔 Send Alert to ${(d.name || d.email).split(' ')[0]}</button>
       </div>`;
     }).join('')}</div>`;
