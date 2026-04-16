@@ -340,7 +340,7 @@ exports.syncFromSheet = onCall({ timeoutSeconds: 120 }, async (req) => {
       batch.set(ref, routeDoc, { merge: true });
       updated++;
     } else {
-      batch.set(ref, { ...routeDoc, confirmed: false, dispatched: false, notified10min: false });
+      batch.set(ref, { ...routeDoc, active: false, confirmed: false, dispatched: false, notified10min: false });
       created++;
     }
 

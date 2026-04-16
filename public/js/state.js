@@ -75,6 +75,13 @@ export function listenAsAdmin() {
 }
 
 // ─── Mutations ─────────────────────────────────────────────────────
+export async function activateRoute(loadId, uid) {
+  await updateDoc(doc(db, 'routes', loadId), {
+    active: true, activeTime: new Date().toISOString()
+  });
+  startTracking(uid);
+}
+
 export async function confirmRoute(loadId) {
   await updateDoc(doc(db, 'routes', loadId), {
     confirmed: true, confirmTime: new Date().toISOString()
@@ -85,4 +92,39 @@ export async function dispatchRoute(loadId) {
   await updateDoc(doc(db, 'routes', loadId), {
     dispatched: true, dispatchTime: new Date().toISOString()
   });
+  stopTracking();
+}
+
+// ─── GPS Tracking ─────────────────────────────────────────────
+let trackingWatchId = null;
+
+function startTracking(uid) {
+  if (trackingWatchId !== null) return;
+  if (!('geolocation' in navigator)) return;
+
+  trackingWatchId = navigator.geolocation.watchPosition(
+    async (pos) => {
+      try {
+        await updateDoc(doc(db, 'drivers', uid), {
+          location: {
+            lat: pos.coords.latitude,
+            lng: pos.coords.longitude,
+            accuracy: pos.coords.accuracy,
+            updatedAt: new Date().toISOString()
+          }
+        });
+      } catch (e) {
+        console.warn('Location update failed:', e.message);
+      }
+    },
+    (err) => console.warn('GPS error:', err.message),
+    { enableHighAccuracy: true, maximumAge: 30000, timeout: 10000 }
+  );
+}
+
+export function stopTracking() {
+  if (trackingWatchId !== null) {
+    navigator.geolocation.clearWatch(trackingWatchId);
+    trackingWatchId = null;
+  }
 }

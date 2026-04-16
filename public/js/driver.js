@@ -1,5 +1,5 @@
 import { currentUser, logout as authLogout } from "./auth.js";
-import { state, confirmRoute, dispatchRoute } from "./state.js";
+import { state, activateRoute, confirmRoute, dispatchRoute } from "./state.js";
 import { toast } from "./toast.js";
 
 export function renderDriverApp() {
@@ -58,6 +58,7 @@ function renderRoutesTab() {
 
 function renderRouteCard(r, now) {
   const firstStop = r.stops?.[0];
+  const active = !!r.active;
   const confirmed = !!r.confirmed;
   const dispatched = !!r.dispatched;
   const typeClass = (r.shipper || '').toLowerCase().includes('amzl') ? 'amzl'
@@ -107,7 +108,10 @@ function renderRouteCard(r, now) {
       }).join('')}
     </div>
     ${!dispatched ? `<div class="route-actions">
-      <button class="action-btn confirm ${confirmed?'done':''}" data-action="confirm" data-id="${r.load_id}">
+      <button class="action-btn active-btn ${active?'done':''}" data-action="activate" data-id="${r.load_id}" ${active?'disabled':''}>
+        ${active ? '✅ On My Way' : '📍 Active — On My Way'}
+      </button>
+      <button class="action-btn confirm ${confirmed?'done':''}" data-action="confirm" data-id="${r.load_id}" ${!active?'disabled':''}>
         ${confirmed ? '✅ In Truck' : '🚛 Confirm In Truck'}
       </button>
       <button class="action-btn dispatch ${dispatched?'done':''}" data-action="dispatch" data-id="${r.load_id}" ${!confirmed?'disabled':''}>
@@ -143,7 +147,12 @@ export function wireDriverEvents() {
     if (!btn) return;
     const id = btn.dataset.id;
     try {
-      if (btn.dataset.action === 'confirm') {
+      if (btn.dataset.action === 'activate') {
+        await activateRoute(id, currentUser.uid);
+        toast('📍 Active! GPS tracking started.', 'success');
+      } else if (btn.dataset.action === 'confirm') {
+        const r = state.routes.find(x => x.load_id === id);
+        if (!r?.active) { toast('Hit Active first!', 'warn'); return; }
         await confirmRoute(id);
         toast('✅ Confirmed in truck!', 'success');
       } else if (btn.dataset.action === 'dispatch') {

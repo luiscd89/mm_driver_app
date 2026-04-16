@@ -14,6 +14,11 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    match /driverLocations/{uid} {
+      allow read:   if isAdmin();
+      allow write:  if isSelf(uid);
+    }
+
     match /routes/{loadId} {
       allow read: if isSignedIn();
       allow create, delete: if isAdmin();
@@ -24,7 +29,8 @@ service cloud.firestore {
          resource.data.driver_uid == request.auth.uid &&
          request.resource.data.driver_uid == resource.data.driver_uid &&
          request.resource.data.date == resource.data.date &&
-         request.resource.data.load_id == resource.data.load_id);
+         request.resource.data.load_id == resource.data.load_id &&
+         request.resource.data.route == resource.data.route);
     }
 
     match /gasReceipts/{id} {
