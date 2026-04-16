@@ -30,7 +30,6 @@ export function renderDriverApp() {
 
   renderRoutesTab();
   renderGasHistory();
-  renderLogsTab();
 }
 
 function renderRoutesTab() {
@@ -47,7 +46,7 @@ function renderRoutesTab() {
   routes.forEach(r => { (byDate[r.date] ||= []).push(r); });
 
   const now = new Date();
-  container.innerHTML = Object.entries(byDate).sort().map(([date, dayRoutes]) => {
+  const routesHtml = Object.entries(byDate).sort().map(([date, dayRoutes]) => {
     const label = new Date(date + 'T12:00:00').toLocaleDateString('en-US',
       { weekday:'long', month:'short', day:'numeric' });
     return `<div class="date-section">
@@ -55,6 +54,8 @@ function renderRoutesTab() {
       ${dayRoutes.map(r => renderRouteCard(r, now)).join('')}
     </div>`;
   }).join('');
+
+  container.innerHTML = routesHtml + renderLogsSection();
 }
 
 function renderRouteCard(r, now) {
@@ -122,21 +123,15 @@ function renderRouteCard(r, now) {
   </div>`;
 }
 
-function renderLogsTab() {
-  const container = document.getElementById('driverLogsTab');
-  if (!container) return;
-
+function renderLogsSection() {
   const logs = state.tripLogs;
-  if (!logs.length) {
-    container.innerHTML = '<div style="text-align:center;padding:48px;color:var(--muted)"><div style="font-size:36px;margin-bottom:10px">📊</div><p>No trip logs this week</p><p style="font-size:11px;margin-top:4px;">Logs reset every Sunday</p></div>';
-    return;
-  }
+  if (!logs.length) return '';
 
   // Group by date
-  const byDate = {};
+  const logsByDate = {};
   logs.forEach(l => {
     const date = l.activeTime ? l.activeTime.slice(0, 10) : 'Unknown';
-    (byDate[date] ||= []).push(l);
+    (logsByDate[date] ||= []).push(l);
   });
 
   // Weekly totals
@@ -145,36 +140,38 @@ function renderLogsTab() {
   const totalTrips = logs.length;
   const completedTrips = logs.filter(l => l.status === 'dispatched').length;
 
-  container.innerHTML = `
-    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:16px;">
-      <div style="font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin-bottom:10px;">This Week (Sun–Sat)</div>
-      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;">
-        <div style="background:var(--surface2);border-radius:8px;padding:10px;text-align:center;">
-          <div style="font-family:'Space Mono',monospace;font-size:18px;font-weight:700;color:var(--accent);">${totalMiles.toFixed(1)}</div>
-          <div style="font-size:9px;color:var(--muted);text-transform:uppercase;">Miles Traveled</div>
-        </div>
-        <div style="background:var(--surface2);border-radius:8px;padding:10px;text-align:center;">
-          <div style="font-family:'Space Mono',monospace;font-size:18px;font-weight:700;color:var(--accent2);">${formatDuration(totalMinutes)}</div>
-          <div style="font-size:9px;color:var(--muted);text-transform:uppercase;">Total Transit</div>
-        </div>
-        <div style="background:var(--surface2);border-radius:8px;padding:10px;text-align:center;">
-          <div style="font-family:'Space Mono',monospace;font-size:18px;font-weight:700;color:var(--blue);">${totalTrips}</div>
-          <div style="font-size:9px;color:var(--muted);text-transform:uppercase;">Total Trips</div>
-        </div>
-        <div style="background:var(--surface2);border-radius:8px;padding:10px;text-align:center;">
-          <div style="font-family:'Space Mono',monospace;font-size:18px;font-weight:700;color:var(--ok);">${completedTrips}</div>
-          <div style="font-size:9px;color:var(--muted);text-transform:uppercase;">Completed</div>
+  return `
+    <div style="margin-top:20px;">
+      <div class="date-label">📊 Weekly Log (Sun–Sat)</div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:16px;">
+        <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;">
+          <div style="background:var(--surface2);border-radius:8px;padding:10px;text-align:center;">
+            <div style="font-family:'Space Mono',monospace;font-size:18px;font-weight:700;color:var(--accent);">${totalMiles.toFixed(1)}</div>
+            <div style="font-size:9px;color:var(--muted);text-transform:uppercase;">Miles Traveled</div>
+          </div>
+          <div style="background:var(--surface2);border-radius:8px;padding:10px;text-align:center;">
+            <div style="font-family:'Space Mono',monospace;font-size:18px;font-weight:700;color:var(--accent2);">${formatDuration(totalMinutes)}</div>
+            <div style="font-size:9px;color:var(--muted);text-transform:uppercase;">Total Transit</div>
+          </div>
+          <div style="background:var(--surface2);border-radius:8px;padding:10px;text-align:center;">
+            <div style="font-family:'Space Mono',monospace;font-size:18px;font-weight:700;color:var(--blue);">${totalTrips}</div>
+            <div style="font-size:9px;color:var(--muted);text-transform:uppercase;">Total Trips</div>
+          </div>
+          <div style="background:var(--surface2);border-radius:8px;padding:10px;text-align:center;">
+            <div style="font-family:'Space Mono',monospace;font-size:18px;font-weight:700;color:var(--ok);">${completedTrips}</div>
+            <div style="font-size:9px;color:var(--muted);text-transform:uppercase;">Completed</div>
+          </div>
         </div>
       </div>
-    </div>
-    ${Object.entries(byDate).sort().reverse().map(([date, dayLogs]) => {
-      const label = new Date(date + 'T12:00:00').toLocaleDateString('en-US',
-        { weekday: 'long', month: 'short', day: 'numeric' });
-      return `<div class="date-section">
-        <div class="date-label">${label}</div>
-        ${dayLogs.map(l => renderLogCard(l)).join('')}
-      </div>`;
-    }).join('')}`;
+      ${Object.entries(logsByDate).sort().reverse().map(([date, dayLogs]) => {
+        const label = new Date(date + 'T12:00:00').toLocaleDateString('en-US',
+          { weekday: 'long', month: 'short', day: 'numeric' });
+        return `<div class="date-section">
+          <div class="date-label">${label}</div>
+          ${dayLogs.map(l => renderLogCard(l)).join('')}
+        </div>`;
+      }).join('')}
+    </div>`;
 }
 
 function renderLogCard(log) {
@@ -271,7 +268,7 @@ export function wireDriverEvents() {
   });
 
   document.querySelectorAll('.dtab').forEach((t, i) => {
-    t.addEventListener('click', () => switchDriverTab(['routes','gas','logs'][i]));
+    t.addEventListener('click', () => switchDriverTab(['routes','gas'][i]));
   });
 
   document.getElementById('logoutBtn').addEventListener('click', authLogout);
@@ -279,9 +276,7 @@ export function wireDriverEvents() {
 
 function switchDriverTab(tab) {
   document.querySelectorAll('.dtab').forEach((t, i) =>
-    t.classList.toggle('active', ['routes','gas','logs'][i] === tab));
+    t.classList.toggle('active', ['routes','gas'][i] === tab));
   document.getElementById('driverRoutesTab').style.display = tab === 'routes' ? 'block' : 'none';
   document.getElementById('driverGasTab').style.display    = tab === 'gas'    ? 'block' : 'none';
-  document.getElementById('driverLogsTab').style.display   = tab === 'logs'   ? 'block' : 'none';
-  if (tab === 'logs') renderLogsTab();
 }
