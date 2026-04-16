@@ -26,7 +26,10 @@ export function onAuth(cb) {
   });
 }
 
-const ADMIN_USERS = { aitruckingmm: 'aitruckingmm@gmail.com' };
+const ADMIN_USERS = {
+  aitruckingmm: 'aitruckingmm@gmail.com',
+  morvenca: 'morvenca@mtndriver.com'
+};
 
 function resolveEmail(input) {
   const v = input.trim().toLowerCase();
