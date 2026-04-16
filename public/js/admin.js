@@ -1,4 +1,4 @@
-import { state } from "./state.js";
+import { state, updateRouteNotes } from "./state.js";
 import { functions, db } from "./firebase-config.js";
 import { toast } from "./toast.js";
 import { httpsCallable }
@@ -81,9 +81,12 @@ export function renderAdmin(tab = currentTab) {
           const locHtml = loc ? `<a href="https://www.google.com/maps?q=${loc.lat},${loc.lng}" target="_blank" style="font-size:10px;color:var(--accent);text-decoration:none;">📍 View on Map</a>` : '';
           const locTime = loc?.updatedAt ? `<span style="font-size:9px;color:var(--muted);margin-left:6px;">${new Date(loc.updatedAt).toLocaleTimeString()}</span>` : '';
           const highlight = myActive > 0 ? 'border-color:var(--accent2);background:rgba(245,158,11,.05);' : '';
+          const avail = d.availability || 'on-duty';
+          const availColors = { 'on-duty': 'var(--ok)', 'on-break': 'var(--accent2)', 'off-duty': 'var(--muted)' };
+          const availLabel = avail.replace('-', ' ');
           return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;${highlight}">
             <div>
-              <div style="font-size:13px;font-weight:600">${d.name || d.email}</div>
+              <div style="font-size:13px;font-weight:600">${d.name || d.email} <span style="font-size:9px;padding:2px 6px;border-radius:10px;background:${availColors[avail]}22;color:${availColors[avail]};">${availLabel}</span></div>
               <div style="font-size:10px;color:var(--muted)">${myRoutes.length} routes · ${myDispatched} dispatched</div>
               ${locHtml ? `<div style="margin-top:4px;">${locHtml}${locTime}</div>` : ''}
             </div>
@@ -127,6 +130,10 @@ export function renderAdmin(tab = currentTab) {
           <div style="color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px">Current Load</div>
           <div style="font-family:'Space Mono',monospace;color:var(--accent)">${activeRoute.load_id}</div>
           <div style="color:var(--text2)">${activeRoute.route}</div>
+          <div style="margin-top:6px;display:flex;gap:6px;">
+            <input class="gas-input route-note-input" type="text" data-note-id="${activeRoute.load_id}" placeholder="Add delivery note..." value="${activeRoute.notes || ''}" style="margin:0;padding:6px 8px;font-size:11px;flex:1;">
+            <button class="route-note-save" data-note-id="${activeRoute.load_id}" style="padding:6px 10px;border-radius:6px;border:none;background:var(--blue);color:#fff;font-size:10px;font-weight:600;cursor:pointer;white-space:nowrap;">Save Note</button>
+          </div>
         </div>` : ''}
         ${locHtml}
         <button class="ds-alert-btn" data-alert-uid="${d.uid}" data-alert-name="${d.name || d.email}">🔔 Send Alert to ${(d.name || d.email).split(' ')[0]}</button>
@@ -286,6 +293,22 @@ export function wireAdminEvents() {
       } finally {
         e.target.disabled = false;
         e.target.textContent = '🔄 Sync Routes from Sheet';
+      }
+      return;
+    }
+
+    // Save delivery note
+    const noteBtn = e.target.closest('.route-note-save');
+    if (noteBtn) {
+      const loadId = noteBtn.dataset.noteId;
+      const input = document.querySelector(`.route-note-input[data-note-id="${loadId}"]`);
+      if (input) {
+        try {
+          await updateRouteNotes(loadId, input.value.trim());
+          toast('Note saved!', 'success');
+        } catch (err) {
+          toast('Failed to save note: ' + err.message, 'alert');
+        }
       }
       return;
     }

@@ -106,6 +106,14 @@ export function listenAsAdmin() {
 }
 
 // ─── Mutations ─────────────────────────────────────────────────────
+export async function updateDriverStatus(uid, availability) {
+  await updateDoc(doc(db, 'drivers', uid), { availability });
+}
+
+export async function updateRouteNotes(loadId, notes) {
+  await updateDoc(doc(db, 'routes', loadId), { notes });
+}
+
 export async function activateRoute(loadId, uid) {
   const now = new Date().toISOString();
   await updateDoc(doc(db, 'routes', loadId), {

@@ -15,14 +15,17 @@ function showScreen(id) {
   document.getElementById(id).classList.add('active');
 }
 
+// ─── Remember username ───────────────────────────────────────
+const emailInput = document.getElementById('loginEmail');
+try { emailInput.value = localStorage.getItem('lastUsername') || ''; } catch {}
+
 // ─── Login form ──────────────────────────────────────────────
 document.getElementById('loginForm').addEventListener('submit', async (e) => {
   e.preventDefault();
+  const username = emailInput.value;
   try {
-    await login(
-      document.getElementById('loginEmail').value,
-      document.getElementById('loginPassword').value
-    );
+    await login(username, document.getElementById('loginPassword').value);
+    try { localStorage.setItem('lastUsername', username); } catch {}
   } catch (err) {
     toast('Login failed: ' + err.message, 'alert');
   }
