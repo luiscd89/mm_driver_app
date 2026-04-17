@@ -413,23 +413,28 @@ exports.resolveFuelRequest = onCall(async (req) => {
     throw new HttpsError('invalid-argument', 'requestId and action=approved|denied required.');
   }
 
+  // Fetch request data first so we can default the amount
+  const reqDoc = await db.collection('fuelRequests').doc(requestId).get();
+  if (!reqDoc.exists) throw new HttpsError('not-found', 'Fuel request not found.');
+  const reqData = reqDoc.data();
+
+  const approvedAmount = action === 'approved'
+    ? (amount || reqData.estimatedCost || null)
+    : null;
+
   const update = {
     status: action,
     resolvedAt: admin.firestore.FieldValue.serverTimestamp(),
     resolvedBy: req.auth.uid,
-    approvedAmount: action === 'approved' ? (amount || null) : null,
+    approvedAmount,
     adminNotes: notes || null
   };
   await db.collection('fuelRequests').doc(requestId).update(update);
-
-  // Notify driver
-  const reqDoc = await db.collection('fuelRequests').doc(requestId).get();
-  const reqData = reqDoc.data();
-  if (reqData && reqData.driver_uid) {
+  if (reqData.driver_uid) {
     await pushToUid(reqData.driver_uid, {
       title: action === 'approved' ? '✅ Fuel Request Approved' : '❌ Fuel Request Denied',
       body: action === 'approved'
-        ? `$${amount || reqData.estimatedCost} approved for load ${reqData.load_id || 'N/A'}`
+        ? `$${approvedAmount} approved for load ${reqData.load_id || 'N/A'}`
         : `Request for load ${reqData.load_id || 'N/A'} was denied. ${notes || ''}`
     });
   }

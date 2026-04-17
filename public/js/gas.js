@@ -18,6 +18,42 @@ const submitFuelRequestFn = httpsCallable(functions, 'submitFuelRequest');
 let currentFile = null;
 let dashFile = null;
 let receiptFile = null;
+let lastDashBase64 = null; // stored for retry
+
+// ─── Image compression (max 1MB, preserves aspect ratio) ──────
+function compressImage(file, maxSizeMB = 1) {
+  return new Promise((resolve) => {
+    // If already small enough, skip compression
+    if (file.size <= maxSizeMB * 1024 * 1024) {
+      resolve(file);
+      return;
+    }
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const canvas = document.createElement('canvas');
+      // Scale down if very large
+      let { width, height } = img;
+      const maxDim = 1920;
+      if (width > maxDim || height > maxDim) {
+        const scale = maxDim / Math.max(width, height);
+        width = Math.round(width * scale);
+        height = Math.round(height * scale);
+      }
+      canvas.width = width;
+      canvas.height = height;
+      canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+      canvas.toBlob(
+        (blob) => resolve(new File([blob], file.name, { type: 'image/jpeg' })),
+        'image/jpeg',
+        0.8
+      );
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
+    img.src = url;
+  });
+}
 
 // Legacy gas receipt functions (kept for backward compat)
 export function handleGasPhoto(input) {
@@ -92,6 +128,10 @@ export function renderFuelTab() {
         <div id="dashAnalyzing" style="display:none;text-align:center;padding:12px;color:var(--accent);">
           <span class="btn-spinner" style="border-color:rgba(0,212,170,.3);border-top-color:var(--accent);"></span>
           <span style="margin-left:8px;font-size:12px;">Analyzing dashboard...</span>
+        </div>
+        <div id="dashRetry" style="display:none;text-align:center;padding:8px;">
+          <button id="retryAnalysis" style="background:var(--accent);color:#fff;border:none;border-radius:8px;padding:8px 20px;font-size:12px;font-weight:600;cursor:pointer;">🔄 Retry Analysis</button>
+          <span style="display:block;font-size:10px;color:var(--muted);margin-top:4px;">Or enter readings manually below</span>
         </div>
 
         <div id="fuelFields" style="display:none;">
@@ -185,12 +225,46 @@ export function wireFuelEvents() {
   const content = document.getElementById('fuelContent');
   if (!content) return;
 
+  // ─── Shared AI analysis runner (used by upload + retry) ───
+  async function runDashAnalysis(base64) {
+    const analyzing = document.getElementById('dashAnalyzing');
+    const retryDiv = document.getElementById('dashRetry');
+    analyzing.style.display = 'flex';
+    retryDiv.style.display = 'none';
+
+    try {
+      const result = await analyzeDashboard({ imageBase64: base64 });
+      if (result.data?.success && result.data?.data) {
+        const d = result.data.data;
+        if (d.odometer) document.getElementById('fuelOdometer').value = d.odometer;
+        if (d.fuelLevel != null) document.getElementById('fuelLevel').value = d.fuelLevel;
+        if (d.defLevel != null) document.getElementById('defLevel').value = d.defLevel;
+        toast('Dashboard analyzed! Verify the readings.', 'success');
+        updateFuelEstimate();
+        retryDiv.style.display = 'none';
+      } else {
+        toast('Could not auto-read dashboard. Please enter manually.', 'info');
+        retryDiv.style.display = 'block';
+      }
+    } catch (err) {
+      toast('Auto-read unavailable. Enter readings manually.', 'info');
+      retryDiv.style.display = 'block';
+    }
+    analyzing.style.display = 'none';
+  }
+
   content.addEventListener('change', async (e) => {
     // Dashboard photo
     if (e.target.id === 'dashPhotoInput') {
       const file = e.target.files[0];
       if (!file) return;
-      dashFile = file;
+
+      // Reset input so re-uploading the same file triggers change again
+      e.target.value = '';
+
+      // Compress before processing
+      dashFile = await compressImage(file);
+
       const reader = new FileReader();
       reader.onload = async (ev) => {
         const preview = document.getElementById('dashPreview');
@@ -198,35 +272,21 @@ export function wireFuelEvents() {
         preview.style.display = 'block';
         document.getElementById('fuelFields').style.display = 'block';
 
-        // Try AI analysis
-        const analyzing = document.getElementById('dashAnalyzing');
-        analyzing.style.display = 'flex';
-        try {
-          const base64 = ev.target.result.split(',')[1];
-          const result = await analyzeDashboard({ imageBase64: base64 });
-          if (result.data?.success && result.data?.data) {
-            const d = result.data.data;
-            if (d.odometer) document.getElementById('fuelOdometer').value = d.odometer;
-            if (d.fuelLevel != null) document.getElementById('fuelLevel').value = d.fuelLevel;
-            if (d.defLevel != null) document.getElementById('defLevel').value = d.defLevel;
-            toast('Dashboard analyzed! Verify the readings.', 'success');
-            updateFuelEstimate();
-          } else {
-            toast('Could not auto-read dashboard. Please enter manually.', 'info');
-          }
-        } catch (err) {
-          toast('Auto-read unavailable. Enter readings manually.', 'info');
-        }
-        analyzing.style.display = 'none';
+        lastDashBase64 = ev.target.result.split(',')[1];
+        await runDashAnalysis(lastDashBase64);
       };
-      reader.readAsDataURL(file);
+      reader.readAsDataURL(dashFile);
     }
 
     // Receipt photo
     if (e.target.id === 'receiptPhotoInput') {
       const file = e.target.files[0];
       if (!file) return;
-      receiptFile = file;
+
+      e.target.value = ''; // allow re-upload of same file
+
+      receiptFile = await compressImage(file);
+
       const reader = new FileReader();
       reader.onload = (ev) => {
         const preview = document.getElementById('receiptPreview');
@@ -234,7 +294,7 @@ export function wireFuelEvents() {
         preview.style.display = 'block';
         document.getElementById('receiptFields').style.display = 'block';
       };
-      reader.readAsDataURL(file);
+      reader.readAsDataURL(receiptFile);
     }
 
     // Update estimate when fuel level changes
@@ -246,6 +306,13 @@ export function wireFuelEvents() {
   });
 
   content.addEventListener('click', async (e) => {
+    // Retry AI analysis
+    if (e.target.id === 'retryAnalysis') {
+      if (!lastDashBase64) { toast('Take a photo first', 'warn'); return; }
+      await runDashAnalysis(lastDashBase64);
+      return;
+    }
+
     // Submit fuel request
     if (e.target.id === 'submitFuelRequest') {
       const fuelLevel = document.getElementById('fuelLevel')?.value;
@@ -276,6 +343,7 @@ export function wireFuelEvents() {
 
         toast(`Fuel request sent! Est: $${result.data.estimatedCost}`, 'success');
         dashFile = null;
+        lastDashBase64 = null;
         renderFuelTab();
       } catch (err) {
         toast('Request failed: ' + err.message, 'alert');
