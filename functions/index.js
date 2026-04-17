@@ -13,7 +13,7 @@ const { onCall, HttpsError } = require('firebase-functions/v2/https');
 const { onDocumentCreated, onDocumentUpdated } = require('firebase-functions/v2/firestore');
 const functionsV1           = require('firebase-functions/v1');
 const admin                 = require('firebase-admin');
-const { VertexAI }          = require('@google-cloud/vertexai');
+const { GoogleGenAI }       = require('@google/genai');
 
 admin.initializeApp();
 const db = admin.firestore();
@@ -256,8 +256,10 @@ exports.onRouteStatusChange = onDocumentUpdated('routes/{loadId}', async (event)
 });
 
 // ─────────────────────────────────────────────────────────────
-// Analyze dashboard photo with Vertex AI Gemini.
+// Analyze dashboard photo with Google Gen AI SDK (Gemini).
 // ─────────────────────────────────────────────────────────────
+const genAI = new GoogleGenAI({ vertexai: true, project: 'trucking-ai-cf0d4', location: 'us-central1' });
+
 exports.analyzeDashboard = onCall({ timeoutSeconds: 120 }, async (req) => {
   if (!req.auth) throw new HttpsError('unauthenticated', 'Sign in required.');
 
@@ -267,10 +269,8 @@ exports.analyzeDashboard = onCall({ timeoutSeconds: 120 }, async (req) => {
   console.log('analyzeDashboard called, image size:', Math.round(imageBase64.length / 1024), 'KB base64');
 
   try {
-    const vertexAI = new VertexAI({ project: 'trucking-ai-cf0d4', location: 'us-central1' });
-    const model = vertexAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
-
-    const result = await model.generateContent({
+    const result = await genAI.models.generateContent({
+      model: 'gemini-2.0-flash',
       contents: [{
         role: 'user',
         parts: [
@@ -289,7 +289,7 @@ Return ONLY this JSON — no markdown, no backticks, no explanation:
       }]
     });
 
-    const text = (result.response.candidates?.[0]?.content?.parts?.[0]?.text || '').trim();
+    const text = (result.text || '').trim();
     console.log('Gemini raw response:', text.slice(0, 500));
 
     // Strip markdown code fences if present
