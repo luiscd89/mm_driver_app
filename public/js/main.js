@@ -2,13 +2,8 @@ import { onAuth, login, register, logout, isAdmin, currentUser } from "./auth.js
 import { listenAsDriver, listenAsAdmin, subscribe, clearSubscriptions } from "./state.js";
 import { renderDriverApp, wireDriverEvents } from "./driver.js";
 import { renderAdmin, wireAdminEvents } from "./admin.js";
-import { handleGasPhoto, submitGasReceipt } from "./gas.js";
 import { registerPush } from "./notifications.js";
 import { toast } from "./toast.js";
-
-// Expose a tiny set of globals for inline onclick= attributes that remain.
-window.submitGasReceipt = submitGasReceipt;
-window.handleGasPhoto   = handleGasPhoto;
 
 function showScreen(id) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
@@ -43,9 +38,6 @@ document.getElementById('registerBtn').addEventListener('click', async () => {
   }
 });
 
-document.getElementById('gasFileInput').addEventListener('change', (e) =>
-  handleGasPhoto(e.target));
-document.getElementById('gasSubmit').addEventListener('click', submitGasReceipt);
 document.getElementById('notifEnable').addEventListener('click', () => {
   if (currentUser) registerPush(currentUser.uid);
 });

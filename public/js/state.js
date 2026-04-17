@@ -107,9 +107,12 @@ export function listenAsAdmin() {
     }
   ));
 
-  // All trip logs
+  // Trip logs — last 30 days only (prevents unbounded reads on mature fleets)
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+  const cutoff = thirtyDaysAgo.toISOString();
   state.unsub.push(onSnapshot(
-    query(collection(db, 'tripLogs'), orderBy('activeTime', 'desc')),
+    query(collection(db, 'tripLogs'), where('activeTime', '>=', cutoff), orderBy('activeTime', 'desc')),
     snap => {
       state.tripLogs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       emit();
@@ -136,6 +139,14 @@ export async function updateRouteNotes(loadId, notes) {
 }
 
 export async function activateRoute(loadId, uid) {
+  // Block activation if driver is off-duty
+  const driverSnap = await getDoc(doc(db, 'drivers', uid));
+  if (driverSnap.exists()) {
+    const avail = driverSnap.data().availability;
+    if (avail === 'off-duty') throw new Error('You are off-duty. Switch to On Duty first.');
+    if (avail === 'on-break') throw new Error('You are on break. Switch to On Duty first.');
+  }
+
   const now = new Date().toISOString();
   await updateDoc(doc(db, 'routes', loadId), {
     active: true, activeTime: now

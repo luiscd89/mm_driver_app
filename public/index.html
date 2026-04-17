@@ -50,37 +50,13 @@
   <div class="driver-tabs">
     <button class="dtab active">📋 Routes</button>
     <button class="dtab">⛽ Fuel</button>
-    <button class="dtab">🧾 Receipts</button>
   </div>
 
   <div id="driverRoutesTab" style="flex:1;overflow-y:auto;padding:16px;display:block;" class="routes-content"></div>
   <div id="driverFuelTab" style="flex:1;overflow-y:auto;display:none;"><div id="fuelContent"></div></div>
-  <div id="driverGasTab" style="flex:1;overflow-y:auto;display:none;" class="gas-content">
-    <div id="notifBanner" class="notif-banner" style="display:none;">
-      <span>🔔 Enable notifications to get 10-min trip alerts</span>
-      <button id="notifEnable">Enable</button>
-    </div>
-    <div class="gas-upload-box">
-      <div class="icon">📸</div>
-      <h3>Upload Gas Receipt</h3>
-      <p>Take a photo or upload your receipt image</p>
-      <label class="gas-file-btn" for="gasFileInput">📷 Take / Choose Photo</label>
-      <input type="file" id="gasFileInput" accept="image/*" capture="environment">
-    </div>
-    <div class="gas-form" id="gasForm" style="display:none;">
-      <img id="gasPreview" class="gas-preview">
-      <label>Amount Paid ($)</label>
-      <input class="gas-input" type="number" id="gasAmount" placeholder="e.g. 87.50" step="0.01">
-      <label>Load ID (which route)</label>
-      <input class="gas-input" type="text" id="gasLoadId" placeholder="e.g. 113BNXJ85">
-      <label>Notes (optional)</label>
-      <input class="gas-input" type="text" id="gasNotes" placeholder="Station name, pump #, etc">
-      <button class="gas-submit" id="gasSubmit" type="button">✅ Submit Receipt</button>
-    </div>
-    <div class="gas-history" id="gasHistoryDiv">
-      <h3>My Recent Receipts</h3>
-      <div id="gasHistoryList"></div>
-    </div>
+  <div id="notifBanner" class="notif-banner" style="display:none;">
+    <span>🔔 Enable notifications to get 10-min trip alerts</span>
+    <button id="notifEnable">Enable</button>
   </div>
 </div>
 

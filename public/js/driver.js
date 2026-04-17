@@ -30,7 +30,6 @@ export function renderDriverApp() {
     : '—';
 
   renderRoutesTab();
-  renderGasHistory();
 
   // Cache routes offline
   try {
@@ -306,26 +305,6 @@ function exportLogsCSV() {
   toast('CSV downloaded!', 'success');
 }
 
-function renderGasHistory() {
-  const list = document.getElementById('gasHistoryList');
-  if (!list) return;
-  const rows = state.gasReceipts;
-  if (!rows.length) {
-    list.innerHTML = '<div style="color:var(--muted);font-size:12px;text-align:center;padding:16px">No receipts yet</div>';
-    return;
-  }
-  list.innerHTML = rows.slice(0, 5).map(r => `
-    <div class="gas-entry">
-      <img src="${r.imageUrl}" alt="Receipt" class="gas-thumb" data-full="${r.imageUrl}">
-      <div class="gas-entry-info">
-        <div class="ge-amount">$${r.amount}</div>
-        <div class="ge-load">${r.load_id}</div>
-        <div class="ge-date">${r.createdAt?.toDate ? r.createdAt.toDate().toLocaleString() : ''}</div>
-        ${r.notes ? `<div style="font-size:10px;color:var(--muted)">${r.notes}</div>` : ''}
-      </div>
-    </div>`).join('');
-}
-
 export function wireDriverEvents() {
   document.getElementById('driverRoutesTab').addEventListener('click', async (e) => {
     // CSV export
@@ -376,15 +355,8 @@ export function wireDriverEvents() {
     }
   });
 
-  // Gas receipt lightbox
-  document.getElementById('driverGasTab').addEventListener('click', (e) => {
-    const thumb = e.target.closest('.gas-thumb');
-    if (!thumb) return;
-    showLightbox(thumb.dataset.full);
-  });
-
   document.querySelectorAll('.dtab').forEach((t, i) => {
-    t.addEventListener('click', () => switchDriverTab(['routes','fuel','gas'][i]));
+    t.addEventListener('click', () => switchDriverTab(['routes','fuel'][i]));
   });
 
   document.getElementById('logoutBtn').addEventListener('click', authLogout);
@@ -392,19 +364,10 @@ export function wireDriverEvents() {
   wireFuelEvents();
 }
 
-function showLightbox(src) {
-  const overlay = document.createElement('div');
-  overlay.className = 'lightbox-overlay';
-  overlay.innerHTML = `<img src="${src}" class="lightbox-img"><div class="lightbox-close">✕</div>`;
-  overlay.addEventListener('click', () => overlay.remove());
-  document.body.appendChild(overlay);
-}
-
 function switchDriverTab(tab) {
   document.querySelectorAll('.dtab').forEach((t, i) =>
-    t.classList.toggle('active', ['routes','fuel','gas'][i] === tab));
+    t.classList.toggle('active', ['routes','fuel'][i] === tab));
   document.getElementById('driverRoutesTab').style.display = tab === 'routes' ? 'block' : 'none';
   document.getElementById('driverFuelTab').style.display   = tab === 'fuel'   ? 'block' : 'none';
-  document.getElementById('driverGasTab').style.display    = tab === 'gas'    ? 'block' : 'none';
   if (tab === 'fuel') renderFuelTab();
 }
