@@ -18,14 +18,14 @@ let receiptFile = null;
 let lastDashBase64 = null; // stored for retry
 
 // ─── Image processing: compress + fix orientation via createImageBitmap ──
-function processImage(file) {
+// maxDim controls quality vs size tradeoff:
+//   - 800px for AI analysis (fast, small payload — gauges are still readable)
+//   - 1280px for storage/archive uploads
+function processImage(file, maxDim = 1280) {
   return new Promise((resolve) => {
-    // Use createImageBitmap — handles EXIF orientation correctly on all modern browsers
     createImageBitmap(file).then((bitmap) => {
       const canvas = document.createElement('canvas');
       let { width, height } = bitmap;
-      // Scale to max 1280px (keeps payload small for Gemini, fast upload on cell data)
-      const maxDim = 1280;
       if (width > maxDim || height > maxDim) {
         const scale = maxDim / Math.max(width, height);
         width = Math.round(width * scale);
@@ -37,13 +37,13 @@ function processImage(file) {
       bitmap.close();
       canvas.toBlob(
         (blob) => {
-          if (!blob) { resolve(file); return; } // fallback if toBlob fails
+          if (!blob) { resolve(file); return; }
           resolve(new File([blob], file.name.replace(/\.\w+$/, '.jpg'), { type: 'image/jpeg' }));
         },
         'image/jpeg',
         0.75
       );
-    }).catch(() => resolve(file)); // fallback to original if createImageBitmap fails
+    }).catch(() => resolve(file));
   });
 }
 
@@ -86,6 +86,22 @@ export function renderFuelTab() {
         </div>
 
         <div id="fuelFields" style="display:none;">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+            <div>
+              <label style="font-size:11px;font-weight:600;text-transform:uppercase;color:var(--muted);display:block;margin-bottom:4px;">Truck #</label>
+              <input class="gas-input" type="text" id="fuelTruckNum" placeholder="e.g. 642918">
+            </div>
+            <div>
+              <label style="font-size:11px;font-weight:600;text-transform:uppercase;color:var(--muted);display:block;margin-bottom:4px;">Rental Company</label>
+              <select class="gas-input" id="fuelRentalCo" style="padding:10px;">
+                <option value="">Select...</option>
+                <option value="Ryder">Ryder</option>
+                <option value="Penske">Penske</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+          </div>
+
           <label style="font-size:11px;font-weight:600;text-transform:uppercase;color:var(--muted);display:block;margin-bottom:4px;">Load ID</label>
           <input class="gas-input" type="text" id="fuelLoadId" value="${loadId}" placeholder="Auto-filled from active route">
 
@@ -162,7 +178,7 @@ function renderFuelHistory() {
     return `<div style="border-bottom:1px solid var(--border);padding:10px 0;display:flex;justify-content:space-between;align-items:center;">
       <div>
         <div style="font-size:12px;font-weight:600;">${r.type === 'self-fill' ? '🧾' : '⛽'} ${r.load_id || 'N/A'}</div>
-        <div style="font-size:10px;color:var(--muted);">${date} · ${r.odometer ? r.odometer + ' mi' : ''} · Fuel: ${r.fuelLevel != null ? r.fuelLevel + '%' : 'N/A'}</div>
+        <div style="font-size:10px;color:var(--muted);">${date}${r.truckNumber ? ' · Truck #' + r.truckNumber : ''}${r.rentalCompany ? ' (' + r.rentalCompany + ')' : ''} · ${r.odometer ? r.odometer + ' mi' : ''} · Fuel: ${r.fuelLevel != null ? r.fuelLevel + '%' : 'N/A'}</div>
       </div>
       <div style="text-align:right;">
         <div style="font-family:'Space Mono',monospace;font-size:13px;font-weight:700;color:var(--accent2);">$${r.receiptAmount || r.estimatedCost || r.approvedAmount || 0}</div>
@@ -193,6 +209,7 @@ export function wireFuelEvents() {
         if (d.odometer) document.getElementById('fuelOdometer').value = d.odometer;
         if (d.fuelLevel != null) document.getElementById('fuelLevel').value = d.fuelLevel;
         if (d.defLevel != null) document.getElementById('defLevel').value = d.defLevel;
+        if (d.truckNumber) document.getElementById('fuelTruckNum').value = d.truckNumber;
         toast('Dashboard analyzed! Verify the readings.', 'success');
         updateFuelEstimate();
         retryDiv.style.display = 'none';
@@ -221,17 +238,19 @@ export function wireFuelEvents() {
       e.target.value = ''; // reset so re-upload of same file works
 
       try {
-        // Process: fix EXIF orientation, compress to JPEG, scale down
-        dashFile = await processImage(rawFile);
-        const dataUrl = await fileToBase64(dashFile);
+        // Two versions: small for AI analysis, larger for storage
+        dashFile = await processImage(rawFile, 1280);
+        const smallFile = await processImage(rawFile, 800);
+        const previewUrl = await fileToBase64(dashFile);
+        const analysisUrl = await fileToBase64(smallFile);
 
         const preview = document.getElementById('dashPreview');
-        preview.src = dataUrl;
+        preview.src = previewUrl;
         preview.style.display = 'block';
         document.getElementById('fuelFields').style.display = 'block';
 
-        lastDashBase64 = dataUrl.split(',')[1];
-        console.log('[Fuel] Processed image:', (dashFile.size / 1024).toFixed(0), 'KB');
+        lastDashBase64 = analysisUrl.split(',')[1];
+        console.log('[Fuel] Storage image:', (dashFile.size / 1024).toFixed(0), 'KB, AI image:', (smallFile.size / 1024).toFixed(0), 'KB');
         await runDashAnalysis(lastDashBase64);
       } catch (err) {
         console.error('[Fuel] Image processing failed:', err);
@@ -296,6 +315,8 @@ export function wireFuelEvents() {
         const result = await submitFuelRequestFn({
           type: 'request',
           loadId: document.getElementById('fuelLoadId')?.value || '',
+          truckNumber: document.getElementById('fuelTruckNum')?.value || '',
+          rentalCompany: document.getElementById('fuelRentalCo')?.value || '',
           odometer: parseInt(document.getElementById('fuelOdometer')?.value) || null,
           fuelLevel: parseInt(fuelLevel),
           defLevel: parseInt(document.getElementById('defLevel')?.value) || null,

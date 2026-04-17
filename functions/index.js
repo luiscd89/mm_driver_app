@@ -270,21 +270,25 @@ exports.analyzeDashboard = onCall({ timeoutSeconds: 120 }, async (req) => {
 
   try {
     const result = await genAI.models.generateContent({
-      model: 'gemini-2.0-flash',
+      model: 'gemini-2.0-flash-001',
       contents: [{
         role: 'user',
         parts: [
           { inlineData: { mimeType: 'image/jpeg', data: imageBase64 } },
-          { text: `You are analyzing a truck dashboard instrument cluster photo.
+          { text: `You are analyzing a commercial truck dashboard instrument cluster photo. These are rental trucks from Ryder or Penske.
 
-Look for these readings and return a JSON object:
+Extract ALL visible readings. Return a JSON object:
 
-1. ODOMETER: The mileage display (usually 6 digits). Look for "ODO", "TRIP", or a long number on the display.
-2. FUEL LEVEL: Either a digital percentage or estimate from the fuel gauge needle position (E=0%, quarter=25%, half=50%, three-quarter=75%, F=100%).
-3. DEF LEVEL: Diesel Exhaust Fluid level if visible (often shown as a small gauge or percentage).
+1. ODOMETER: The mileage display (6+ digits). Look for "ODO" label or the largest number on the digital display.
+2. FUEL LEVEL: Digital percentage OR estimate from gauge needle (E=0%, 1/4=25%, 1/2=50%, 3/4=75%, F=100%).
+3. DEF LEVEL: Diesel Exhaust Fluid percentage or gauge reading if visible.
+4. TRUCK NUMBER: The unit number — often visible on a sticker on the dashboard, windshield, or as a number displayed on screen. Ryder trucks typically show a 4-6 digit number. Penske trucks may show it differently.
 
-Return ONLY this JSON — no markdown, no backticks, no explanation:
-{"odometer": <number or null>, "fuelLevel": <0-100 or null>, "defLevel": <0-100 or null>, "fuelGauge": "<description>", "notes": "<anything else visible>"}` }
+Be precise with the odometer — read every digit carefully.
+For fuel level, even a rough estimate from the gauge position is useful.
+
+Return ONLY this JSON — no markdown, no backticks, no extra text:
+{"odometer": <number or null>, "fuelLevel": <0-100 or null>, "defLevel": <0-100 or null>, "truckNumber": "<string or null>", "fuelGauge": "<e.g. quarter tank, half, near empty>", "notes": "<warnings, engine hours, or anything useful>"}` }
         ]
       }]
     });
@@ -339,7 +343,7 @@ async function getDieselPrice() {
 exports.submitFuelRequest = onCall({ timeoutSeconds: 30 }, async (req) => {
   if (!req.auth) throw new HttpsError('unauthenticated', 'Sign in required.');
 
-  const { loadId, odometer, fuelLevel, defLevel, dashImageUrl, dashStoragePath,
+  const { loadId, truckNumber, rentalCompany, odometer, fuelLevel, defLevel, dashImageUrl, dashStoragePath,
           type, receiptImageUrl, receiptStoragePath, receiptAmount, notes } = req.data || {};
 
   const uid = req.auth.uid;
@@ -361,6 +365,8 @@ exports.submitFuelRequest = onCall({ timeoutSeconds: 30 }, async (req) => {
     driver_uid: uid,
     driver_name: driverName,
     load_id: loadId || null,
+    truckNumber: truckNumber || null,
+    rentalCompany: rentalCompany || null,
     type, // 'request' or 'self-fill'
     status: type === 'self-fill' ? 'completed' : 'pending',
     odometer: odometer || null,
@@ -402,8 +408,9 @@ exports.submitFuelRequest = onCall({ timeoutSeconds: 30 }, async (req) => {
     await Promise.all(jobs);
 
     // WhatsApp alert
+    const truckInfo = truckNumber ? `🚛 Truck #${truckNumber}${rentalCompany ? ' (' + rentalCompany + ')' : ''}` : '🚛 Load: ' + (loadId || 'N/A');
     await sendWhatsAppAlert(
-      `⛽ *FUEL REQUEST*\n\n👤 ${driverName}\n🚛 Load: ${loadId || 'N/A'}\n⛽ Fuel Level: ${fuelLevel}%\n💧 DEF Level: ${defLevel != null ? defLevel + '%' : 'N/A'}\n📏 Odometer: ${odometer || 'N/A'} mi\n\n💰 Est. ${estimatedGallons} gal × $${dieselPrice}/gal\n💵 *Estimated: $${estimatedCost}*\n\n⏰ ${new Date().toLocaleTimeString('en-US', { timeZone: 'America/New_York' })}`
+      `⛽ *FUEL REQUEST*\n\n👤 ${driverName}\n${truckInfo}\n📦 Load: ${loadId || 'N/A'}\n⛽ Fuel Level: ${fuelLevel}%\n💧 DEF Level: ${defLevel != null ? defLevel + '%' : 'N/A'}\n📏 Odometer: ${odometer || 'N/A'} mi\n\n💰 Est. ${estimatedGallons} gal × $${dieselPrice}/gal\n💵 *Estimated: $${estimatedCost}*\n\n⏰ ${new Date().toLocaleTimeString('en-US', { timeZone: 'America/New_York' })}`
     );
   } else {
     // Self-fill WhatsApp notification
