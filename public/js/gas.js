@@ -17,22 +17,15 @@ let dashFile = null;
 let receiptFile = null;
 let lastDashBase64 = null; // stored for retry
 
-// ─── Image compression (max 1MB, preserves aspect ratio) ──────
-function compressImage(file, maxSizeMB = 1) {
+// ─── Image processing: compress + fix orientation via createImageBitmap ──
+function processImage(file) {
   return new Promise((resolve) => {
-    // If already small enough, skip compression
-    if (file.size <= maxSizeMB * 1024 * 1024) {
-      resolve(file);
-      return;
-    }
-    const img = new Image();
-    const url = URL.createObjectURL(file);
-    img.onload = () => {
-      URL.revokeObjectURL(url);
+    // Use createImageBitmap — handles EXIF orientation correctly on all modern browsers
+    createImageBitmap(file).then((bitmap) => {
       const canvas = document.createElement('canvas');
-      // Scale down if very large
-      let { width, height } = img;
-      const maxDim = 1920;
+      let { width, height } = bitmap;
+      // Scale to max 1280px (keeps payload small for Gemini, fast upload on cell data)
+      const maxDim = 1280;
       if (width > maxDim || height > maxDim) {
         const scale = maxDim / Math.max(width, height);
         width = Math.round(width * scale);
@@ -40,15 +33,27 @@ function compressImage(file, maxSizeMB = 1) {
       }
       canvas.width = width;
       canvas.height = height;
-      canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+      canvas.getContext('2d').drawImage(bitmap, 0, 0, width, height);
+      bitmap.close();
       canvas.toBlob(
-        (blob) => resolve(new File([blob], file.name, { type: 'image/jpeg' })),
+        (blob) => {
+          if (!blob) { resolve(file); return; } // fallback if toBlob fails
+          resolve(new File([blob], file.name.replace(/\.\w+$/, '.jpg'), { type: 'image/jpeg' }));
+        },
         'image/jpeg',
-        0.8
+        0.75
       );
-    };
-    img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
-    img.src = url;
+    }).catch(() => resolve(file)); // fallback to original if createImageBitmap fails
+  });
+}
+
+// Convert a File to base64 data URL
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
   });
 }
 
@@ -179,7 +184,10 @@ export function wireFuelEvents() {
     retryDiv.style.display = 'none';
 
     try {
+      console.log('[Fuel] Sending image to Gemini, base64 length:', base64.length);
       const result = await analyzeDashboard({ imageBase64: base64 });
+      console.log('[Fuel] Gemini response:', JSON.stringify(result.data));
+
       if (result.data?.success && result.data?.data) {
         const d = result.data.data;
         if (d.odometer) document.getElementById('fuelOdometer').value = d.odometer;
@@ -189,11 +197,14 @@ export function wireFuelEvents() {
         updateFuelEstimate();
         retryDiv.style.display = 'none';
       } else {
-        toast('Could not auto-read dashboard. Please enter manually.', 'info');
+        const reason = result.data?.error || result.data?.raw || 'Unknown';
+        console.warn('[Fuel] Analysis returned no data:', reason);
+        toast('Could not read dashboard. Enter manually or retry.', 'info');
         retryDiv.style.display = 'block';
       }
     } catch (err) {
-      toast('Auto-read unavailable. Enter readings manually.', 'info');
+      console.error('[Fuel] Analysis call failed:', err);
+      toast('Analysis failed: ' + (err.message || 'Unknown error'), 'alert');
       retryDiv.style.display = 'block';
     }
     analyzing.style.display = 'none';
@@ -205,23 +216,27 @@ export function wireFuelEvents() {
       const file = e.target.files[0];
       if (!file) return;
 
-      // Reset input so re-uploading the same file triggers change again
-      e.target.value = '';
+      // Grab reference before clearing input
+      const rawFile = file;
+      e.target.value = ''; // reset so re-upload of same file works
 
-      // Compress before processing
-      dashFile = await compressImage(file);
+      try {
+        // Process: fix EXIF orientation, compress to JPEG, scale down
+        dashFile = await processImage(rawFile);
+        const dataUrl = await fileToBase64(dashFile);
 
-      const reader = new FileReader();
-      reader.onload = async (ev) => {
         const preview = document.getElementById('dashPreview');
-        preview.src = ev.target.result;
+        preview.src = dataUrl;
         preview.style.display = 'block';
         document.getElementById('fuelFields').style.display = 'block';
 
-        lastDashBase64 = ev.target.result.split(',')[1];
+        lastDashBase64 = dataUrl.split(',')[1];
+        console.log('[Fuel] Processed image:', (dashFile.size / 1024).toFixed(0), 'KB');
         await runDashAnalysis(lastDashBase64);
-      };
-      reader.readAsDataURL(dashFile);
+      } catch (err) {
+        console.error('[Fuel] Image processing failed:', err);
+        toast('Failed to process photo. Try again.', 'alert');
+      }
     }
 
     // Receipt photo
@@ -229,18 +244,20 @@ export function wireFuelEvents() {
       const file = e.target.files[0];
       if (!file) return;
 
-      e.target.value = ''; // allow re-upload of same file
+      const rawFile = file;
+      e.target.value = '';
 
-      receiptFile = await compressImage(file);
+      try {
+        receiptFile = await processImage(rawFile);
+        const dataUrl = await fileToBase64(receiptFile);
 
-      const reader = new FileReader();
-      reader.onload = (ev) => {
         const preview = document.getElementById('receiptPreview');
-        preview.src = ev.target.result;
+        preview.src = dataUrl;
         preview.style.display = 'block';
         document.getElementById('receiptFields').style.display = 'block';
-      };
-      reader.readAsDataURL(receiptFile);
+      } catch (err) {
+        toast('Failed to process photo. Try again.', 'alert');
+      }
     }
 
     // Update estimate when fuel level changes

@@ -258,11 +258,13 @@ exports.onRouteStatusChange = onDocumentUpdated('routes/{loadId}', async (event)
 // ─────────────────────────────────────────────────────────────
 // Analyze dashboard photo with Vertex AI Gemini.
 // ─────────────────────────────────────────────────────────────
-exports.analyzeDashboard = onCall({ timeoutSeconds: 60 }, async (req) => {
+exports.analyzeDashboard = onCall({ timeoutSeconds: 120 }, async (req) => {
   if (!req.auth) throw new HttpsError('unauthenticated', 'Sign in required.');
 
   const { imageBase64 } = req.data || {};
   if (!imageBase64) throw new HttpsError('invalid-argument', 'imageBase64 required.');
+
+  console.log('analyzeDashboard called, image size:', Math.round(imageBase64.length / 1024), 'KB base64');
 
   try {
     const vertexAI = new VertexAI({ project: 'trucking-ai-cf0d4', location: 'us-central1' });
@@ -273,28 +275,40 @@ exports.analyzeDashboard = onCall({ timeoutSeconds: 60 }, async (req) => {
         role: 'user',
         parts: [
           { inlineData: { mimeType: 'image/jpeg', data: imageBase64 } },
-          { text: `Analyze this truck dashboard photo. Extract the following data and return ONLY a JSON object:
-{
-  "odometer": <number in miles, or null if not visible>,
-  "fuelLevel": <percentage 0-100, estimate from gauge if digital not available, or null>,
-  "defLevel": <percentage 0-100, or null if not visible>,
-  "fuelGauge": "<description of fuel gauge position e.g. 'quarter tank', 'half', 'near empty'>",
-  "notes": "<any other relevant info visible on dash>"
-}
-Return ONLY the JSON, no markdown, no explanation.` }
+          { text: `You are analyzing a truck dashboard instrument cluster photo.
+
+Look for these readings and return a JSON object:
+
+1. ODOMETER: The mileage display (usually 6 digits). Look for "ODO", "TRIP", or a long number on the display.
+2. FUEL LEVEL: Either a digital percentage or estimate from the fuel gauge needle position (E=0%, quarter=25%, half=50%, three-quarter=75%, F=100%).
+3. DEF LEVEL: Diesel Exhaust Fluid level if visible (often shown as a small gauge or percentage).
+
+Return ONLY this JSON — no markdown, no backticks, no explanation:
+{"odometer": <number or null>, "fuelLevel": <0-100 or null>, "defLevel": <0-100 or null>, "fuelGauge": "<description>", "notes": "<anything else visible>"}` }
         ]
       }]
     });
 
-    const text = result.response.candidates[0].content.parts[0].text.trim();
-    // Extract JSON from response
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    const text = (result.response.candidates?.[0]?.content?.parts?.[0]?.text || '').trim();
+    console.log('Gemini raw response:', text.slice(0, 500));
+
+    // Strip markdown code fences if present
+    const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+    const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
-      return { success: true, data: JSON.parse(jsonMatch[0]) };
+      try {
+        const parsed = JSON.parse(jsonMatch[0]);
+        console.log('Parsed dashboard data:', JSON.stringify(parsed));
+        return { success: true, data: parsed };
+      } catch (parseErr) {
+        console.error('JSON parse failed:', parseErr.message, 'from:', jsonMatch[0]);
+        return { success: false, error: 'Could not parse AI response', raw: text };
+      }
     }
-    return { success: false, raw: text };
+    console.warn('No JSON found in Gemini response:', text);
+    return { success: false, error: 'No readings detected', raw: text };
   } catch (err) {
-    console.error('Gemini analysis failed:', err.message);
+    console.error('Gemini analysis failed:', err.message, err.stack);
     return { success: false, error: err.message };
   }
 });
