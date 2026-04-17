@@ -347,9 +347,14 @@ function renderFuelRequestCard(r, showActions) {
 
 async function loadWhatsAppSettings(c) {
   let cfg = { enabled: false, provider: 'callmebot', phones: [], webhookUrl: '', phoneNumberId: '', accessToken: '', recipientNumbers: [] };
+  let geminiKey = '';
   try {
     const snap = await getDoc(doc(db, 'settings', 'whatsapp'));
     if (snap.exists()) cfg = { ...cfg, ...snap.data() };
+  } catch {}
+  try {
+    const gSnap = await getDoc(doc(db, 'settings', 'gemini'));
+    if (gSnap.exists()) geminiKey = gSnap.data().apiKey || '';
   } catch {}
 
   const phonesJson = (cfg.phones || []).map(p => `${p.number}:${p.apikey}`).join('\n');
@@ -412,7 +417,7 @@ async function loadWhatsAppSettings(c) {
         <button id="waTestBtn" style="width:100%;padding:10px;border-radius:10px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:12px;font-weight:600;cursor:pointer;margin-top:8px;">Send Test Message</button>
       </div>
 
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;">
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:16px;">
         <div style="font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin-bottom:8px;">How It Works</div>
         <div style="font-size:12px;color:var(--text2);line-height:1.6;">
           When a driver hits <b>Active</b>, <b>Confirm</b>, or <b>Dispatch</b>, a WhatsApp message is automatically sent with the driver name, load ID, route, and timestamp.<br><br>
@@ -420,6 +425,14 @@ async function loadWhatsAppSettings(c) {
           <b>Webhook</b> — Use Make.com or Zapier to forward to WhatsApp group.<br>
           <b>Meta API</b> — Official WhatsApp Business API for high volume.
         </div>
+      </div>
+
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin-bottom:12px;">Dashboard AI (Gemini)</div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;">
+        <p style="font-size:11px;color:var(--muted);margin-bottom:12px;">Powers the dashboard photo scanner. Get a free API key at <a href="https://aistudio.google.com/apikeys" target="_blank" style="color:var(--accent);">aistudio.google.com/apikeys</a></p>
+        <label class="login-label">Gemini API Key</label>
+        <input id="geminiApiKey" class="login-input" type="password" placeholder="AIza..." value="${geminiKey}">
+        <button id="geminiSaveBtn" style="width:100%;padding:12px;border-radius:10px;border:none;background:var(--accent);color:#000;font-size:14px;font-weight:600;cursor:pointer;margin-top:8px;">Save Gemini Key</button>
       </div>
     </div>`;
 }
@@ -445,6 +458,19 @@ export function wireAdminEvents() {
   });
 
   document.getElementById('adminContent').addEventListener('click', async (e) => {
+    // Gemini API key save
+    if (e.target.id === 'geminiSaveBtn') {
+      const key = (document.getElementById('geminiApiKey')?.value || '').trim();
+      if (!key) { toast('Enter an API key', 'warn'); return; }
+      try {
+        await setDoc(doc(db, 'settings', 'gemini'), { apiKey: key });
+        toast('Gemini API key saved!', 'success');
+      } catch (err) {
+        toast('Failed: ' + err.message, 'alert');
+      }
+      return;
+    }
+
     // WhatsApp save
     if (e.target.id === 'waSaveBtn') {
       const provider = document.getElementById('waProvider')?.value || 'callmebot';

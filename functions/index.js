@@ -257,8 +257,26 @@ exports.onRouteStatusChange = onDocumentUpdated('routes/{loadId}', async (event)
 
 // ─────────────────────────────────────────────────────────────
 // Analyze dashboard photo with Google Gen AI SDK (Gemini).
+// Uses Gemini API key stored in Firestore settings/gemini.apiKey
+// Get a free key at https://aistudio.google.com/apikeys
 // ─────────────────────────────────────────────────────────────
-const genAI = new GoogleGenAI({ vertexai: true, project: 'trucking-ai-cf0d4', location: 'us-central1' });
+let genAI = null;
+
+async function getGenAI() {
+  if (genAI) return genAI;
+  // Try API key from Firestore settings first
+  const settingsDoc = await db.collection('settings').doc('gemini').get();
+  const apiKey = settingsDoc.exists && settingsDoc.data().apiKey;
+  if (apiKey) {
+    genAI = new GoogleGenAI({ apiKey });
+    console.log('Gemini initialized with API key from settings');
+  } else {
+    // Fallback to Vertex AI (requires aiplatform API enabled)
+    genAI = new GoogleGenAI({ vertexai: true, project: 'trucking-ai-cf0d4', location: 'us-central1' });
+    console.log('Gemini initialized with Vertex AI');
+  }
+  return genAI;
+}
 
 exports.analyzeDashboard = onCall({ timeoutSeconds: 120 }, async (req) => {
   if (!req.auth) throw new HttpsError('unauthenticated', 'Sign in required.');
@@ -269,8 +287,9 @@ exports.analyzeDashboard = onCall({ timeoutSeconds: 120 }, async (req) => {
   console.log('analyzeDashboard called, image size:', Math.round(imageBase64.length / 1024), 'KB base64');
 
   try {
-    const result = await genAI.models.generateContent({
-      model: 'gemini-2.0-flash-001',
+    const ai = await getGenAI();
+    const result = await ai.models.generateContent({
+      model: 'gemini-2.0-flash',
       contents: [{
         role: 'user',
         parts: [
