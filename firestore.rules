@@ -23,6 +23,16 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
+    match /fuelRequests/{reqId} {
+      allow read:   if isAdmin() ||
+        (isSignedIn() && resource.data.driver_uid == request.auth.uid);
+      allow create: if isSignedIn() &&
+        request.resource.data.driver_uid == request.auth.uid;
+      allow update: if isAdmin() ||
+        (isSignedIn() && resource.data.driver_uid == request.auth.uid);
+      allow delete: if isAdmin();
+    }
+
     match /tripLogs/{logId} {
       allow read:   if isAdmin() ||
         (isSignedIn() && resource.data.driver_uid == request.auth.uid);

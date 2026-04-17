@@ -14,6 +14,7 @@ export const state = {
   allRoutes: [],       // admin only
   gasReceipts: [],     // current driver's receipts (or all, if admin)
   tripLogs: [],        // trip logs (driver: own, admin: all)
+  fuelRequests: [],    // fuel requests (driver: own, admin: all)
   unsub: []
 };
 
@@ -25,7 +26,7 @@ export function clearSubscriptions() {
   state.unsub.forEach(u => { try { u(); } catch {} });
   state.unsub = [];
   state.routes = []; state.allDrivers = []; state.allRoutes = [];
-  state.gasReceipts = []; state.tripLogs = [];
+  state.gasReceipts = []; state.tripLogs = []; state.fuelRequests = [];
   emit();
 }
 
@@ -71,6 +72,17 @@ export function listenAsDriver(uid) {
     state.tripLogs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     emit();
   }));
+
+  // Fuel requests
+  const qFuel = query(
+    collection(db, 'fuelRequests'),
+    where('driver_uid', '==', uid),
+    orderBy('createdAt', 'desc')
+  );
+  state.unsub.push(onSnapshot(qFuel, snap => {
+    state.fuelRequests = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    emit();
+  }));
 }
 
 // ─── Admin-scoped listeners ────────────────────────────────────────
@@ -100,6 +112,15 @@ export function listenAsAdmin() {
     query(collection(db, 'tripLogs'), orderBy('activeTime', 'desc')),
     snap => {
       state.tripLogs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      emit();
+    }
+  ));
+
+  // All fuel requests
+  state.unsub.push(onSnapshot(
+    query(collection(db, 'fuelRequests'), orderBy('createdAt', 'desc')),
+    snap => {
+      state.fuelRequests = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       emit();
     }
   ));

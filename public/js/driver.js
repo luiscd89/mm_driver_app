@@ -1,6 +1,7 @@
 import { currentUser, logout as authLogout } from "./auth.js";
 import { state, activateRoute, confirmRoute, dispatchRoute, updateDriverStatus } from "./state.js";
 import { toast } from "./toast.js";
+import { renderFuelTab, wireFuelEvents } from "./gas.js";
 
 export function renderDriverApp() {
   if (!currentUser) return;
@@ -383,10 +384,12 @@ export function wireDriverEvents() {
   });
 
   document.querySelectorAll('.dtab').forEach((t, i) => {
-    t.addEventListener('click', () => switchDriverTab(['routes','gas'][i]));
+    t.addEventListener('click', () => switchDriverTab(['routes','fuel','gas'][i]));
   });
 
   document.getElementById('logoutBtn').addEventListener('click', authLogout);
+
+  wireFuelEvents();
 }
 
 function showLightbox(src) {
@@ -399,7 +402,9 @@ function showLightbox(src) {
 
 function switchDriverTab(tab) {
   document.querySelectorAll('.dtab').forEach((t, i) =>
-    t.classList.toggle('active', ['routes','gas'][i] === tab));
+    t.classList.toggle('active', ['routes','fuel','gas'][i] === tab));
   document.getElementById('driverRoutesTab').style.display = tab === 'routes' ? 'block' : 'none';
+  document.getElementById('driverFuelTab').style.display   = tab === 'fuel'   ? 'block' : 'none';
   document.getElementById('driverGasTab').style.display    = tab === 'gas'    ? 'block' : 'none';
+  if (tab === 'fuel') renderFuelTab();
 }

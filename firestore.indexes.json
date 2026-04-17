@@ -32,6 +32,14 @@
         { "fieldPath": "weekStart", "order": "DESCENDING" }
       ]
     }
+    ,{
+      "collectionGroup": "fuelRequests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "driver_uid", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    }
   ],
   "fieldOverrides": []
 }

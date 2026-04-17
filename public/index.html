@@ -48,11 +48,13 @@
   </div>
 
   <div class="driver-tabs">
-    <button class="dtab active">📋 My Routes</button>
-    <button class="dtab">⛽ Gas Receipt</button>
+    <button class="dtab active">📋 Routes</button>
+    <button class="dtab">⛽ Fuel</button>
+    <button class="dtab">🧾 Receipts</button>
   </div>
 
   <div id="driverRoutesTab" style="flex:1;overflow-y:auto;padding:16px;display:block;" class="routes-content"></div>
+  <div id="driverFuelTab" style="flex:1;overflow-y:auto;display:none;"><div id="fuelContent"></div></div>
   <div id="driverGasTab" style="flex:1;overflow-y:auto;display:none;" class="gas-content">
     <div id="notifBanner" class="notif-banner" style="display:none;">
       <span>🔔 Enable notifications to get 10-min trip alerts</span>
@@ -91,7 +93,8 @@
   <div class="admin-tabs">
     <button class="atab active">📊 Overview</button>
     <button class="atab">🚛 Drivers</button>
-    <button class="atab">⛽ Gas <span class="abadge" id="gasCount">0</span></button>
+    <button class="atab">⛽ Fuel <span class="abadge" id="fuelPendingCount">0</span></button>
+    <button class="atab">🧾 Gas</button>
     <button class="atab">📋 Logs</button>
     <button class="atab">⚙️</button>
   </div>

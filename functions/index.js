@@ -13,6 +13,7 @@ const { onCall, HttpsError } = require('firebase-functions/v2/https');
 const { onDocumentCreated, onDocumentUpdated } = require('firebase-functions/v2/firestore');
 const functionsV1           = require('firebase-functions/v1');
 const admin                 = require('firebase-admin');
+const { VertexAI }          = require('@google-cloud/vertexai');
 
 admin.initializeApp();
 const db = admin.firestore();
@@ -193,6 +194,19 @@ async function sendWhatsAppAlert(message) {
         body: JSON.stringify({ message, timestamp: new Date().toISOString() })
       });
     } catch (e) { console.warn('Webhook failed:', e.message); }
+  } else if (cfg.provider === 'twilio') {
+    // Twilio WhatsApp API (supports groups via individual messages)
+    const { accountSid, authToken, fromNumber, toNumbers } = cfg;
+    const auth = Buffer.from(`${accountSid}:${authToken}`).toString('base64');
+    for (const to of (toNumbers || [])) {
+      try {
+        await fetch(`https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`, {
+          method: 'POST',
+          headers: { 'Authorization': `Basic ${auth}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: `From=whatsapp%3A%2B${fromNumber}&To=whatsapp%3A%2B${to}&Body=${encodeURIComponent(message)}`
+        });
+      } catch (e) { console.warn('Twilio failed for', to, e.message); }
+    }
   } else if (cfg.provider === 'meta') {
     // Meta WhatsApp Business Cloud API
     const { phoneNumberId, accessToken, recipientNumbers } = cfg;
@@ -239,6 +253,188 @@ exports.onRouteStatusChange = onDocumentUpdated('routes/{loadId}', async (event)
       `🚦 *DISPATCHED*\n\n👤 ${driver}\n🚛 Load: ${loadId}\n📦 Route: ${route}\n⏰ ${new Date().toLocaleTimeString('en-US', { timeZone: 'America/New_York' })}\n\n_Driver dispatched — route in progress_`
     );
   }
+});
+
+// ─────────────────────────────────────────────────────────────
+// Analyze dashboard photo with Vertex AI Gemini.
+// ─────────────────────────────────────────────────────────────
+exports.analyzeDashboard = onCall({ timeoutSeconds: 60 }, async (req) => {
+  if (!req.auth) throw new HttpsError('unauthenticated', 'Sign in required.');
+
+  const { imageBase64 } = req.data || {};
+  if (!imageBase64) throw new HttpsError('invalid-argument', 'imageBase64 required.');
+
+  try {
+    const vertexAI = new VertexAI({ project: 'trucking-ai-cf0d4', location: 'us-central1' });
+    const model = vertexAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+
+    const result = await model.generateContent({
+      contents: [{
+        role: 'user',
+        parts: [
+          { inlineData: { mimeType: 'image/jpeg', data: imageBase64 } },
+          { text: `Analyze this truck dashboard photo. Extract the following data and return ONLY a JSON object:
+{
+  "odometer": <number in miles, or null if not visible>,
+  "fuelLevel": <percentage 0-100, estimate from gauge if digital not available, or null>,
+  "defLevel": <percentage 0-100, or null if not visible>,
+  "fuelGauge": "<description of fuel gauge position e.g. 'quarter tank', 'half', 'near empty'>",
+  "notes": "<any other relevant info visible on dash>"
+}
+Return ONLY the JSON, no markdown, no explanation.` }
+        ]
+      }]
+    });
+
+    const text = result.response.candidates[0].content.parts[0].text.trim();
+    // Extract JSON from response
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      return { success: true, data: JSON.parse(jsonMatch[0]) };
+    }
+    return { success: false, raw: text };
+  } catch (err) {
+    console.error('Gemini analysis failed:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// Get current diesel price (national average from EIA or settings).
+// ─────────────────────────────────────────────────────────────
+async function getDieselPrice() {
+  // Check if admin set a manual price
+  const settingsDoc = await db.collection('settings').doc('fuel').get();
+  if (settingsDoc.exists && settingsDoc.data().dieselPrice) {
+    return settingsDoc.data().dieselPrice;
+  }
+  // Try EIA API for national average
+  try {
+    const resp = await fetch('https://api.eia.gov/v2/petroleum/pri/gnd/data/?api_key=DEMO_KEY&frequency=weekly&data[0]=value&facets[product][]=EPD2D&facets[duession][]=NUS&sort[0][column]=period&sort[0][direction]=desc&length=1');
+    const json = await resp.json();
+    if (json?.response?.data?.[0]?.value) {
+      return parseFloat(json.response.data[0].value);
+    }
+  } catch {}
+  return 3.85; // Fallback national average
+}
+
+// ─────────────────────────────────────────────────────────────
+// Submit fuel request — calculates cost estimate, alerts admins.
+// ─────────────────────────────────────────────────────────────
+exports.submitFuelRequest = onCall({ timeoutSeconds: 30 }, async (req) => {
+  if (!req.auth) throw new HttpsError('unauthenticated', 'Sign in required.');
+
+  const { loadId, odometer, fuelLevel, defLevel, dashImageUrl, dashStoragePath,
+          type, receiptImageUrl, receiptStoragePath, receiptAmount, notes } = req.data || {};
+
+  const uid = req.auth.uid;
+  const driverDoc = await db.collection('drivers').doc(uid).get();
+  const driverName = driverDoc.exists ? (driverDoc.data().name || req.auth.token.email) : 'Unknown';
+
+  const dieselPrice = await getDieselPrice();
+  const tankCapacity = 150; // Default truck tank gallons (can be configured)
+
+  // Calculate estimated fuel needed and cost
+  let estimatedGallons = 0;
+  let estimatedCost = 0;
+  if (type === 'request' && fuelLevel !== null && fuelLevel !== undefined) {
+    estimatedGallons = Math.round(tankCapacity * (1 - fuelLevel / 100));
+    estimatedCost = Math.round(estimatedGallons * dieselPrice * 100) / 100;
+  }
+
+  const fuelReq = {
+    driver_uid: uid,
+    driver_name: driverName,
+    load_id: loadId || null,
+    type, // 'request' or 'self-fill'
+    status: type === 'self-fill' ? 'completed' : 'pending',
+    odometer: odometer || null,
+    fuelLevel: fuelLevel ?? null,
+    defLevel: defLevel ?? null,
+    dashImageUrl: dashImageUrl || null,
+    dashStoragePath: dashStoragePath || null,
+    receiptImageUrl: receiptImageUrl || null,
+    receiptStoragePath: receiptStoragePath || null,
+    receiptAmount: receiptAmount || null,
+    dieselPrice,
+    estimatedGallons,
+    estimatedCost,
+    notes: notes || null,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    resolvedAt: type === 'self-fill' ? admin.firestore.FieldValue.serverTimestamp() : null,
+    resolvedBy: null
+  };
+
+  const docRef = await db.collection('fuelRequests').add(fuelReq);
+
+  // Send alerts
+  if (type === 'request') {
+    // Push to all admins via FCM
+    const adminsSnap = await db.collection('drivers').where('role', '==', 'admin').get();
+    const jobs = [];
+    adminsSnap.forEach(doc => {
+      const tokens = doc.data().fcmTokens || [];
+      if (tokens.length) {
+        jobs.push(admin.messaging().sendEachForMulticast({
+          tokens,
+          notification: {
+            title: `⛽ Fuel Request — ${driverName}`,
+            body: `Load: ${loadId || 'N/A'} · Fuel: ${fuelLevel}% · Est: $${estimatedCost}`
+          }
+        }).catch(() => {}));
+      }
+    });
+    await Promise.all(jobs);
+
+    // WhatsApp alert
+    await sendWhatsAppAlert(
+      `⛽ *FUEL REQUEST*\n\n👤 ${driverName}\n🚛 Load: ${loadId || 'N/A'}\n⛽ Fuel Level: ${fuelLevel}%\n💧 DEF Level: ${defLevel != null ? defLevel + '%' : 'N/A'}\n📏 Odometer: ${odometer || 'N/A'} mi\n\n💰 Est. ${estimatedGallons} gal × $${dieselPrice}/gal\n💵 *Estimated: $${estimatedCost}*\n\n⏰ ${new Date().toLocaleTimeString('en-US', { timeZone: 'America/New_York' })}`
+    );
+  } else {
+    // Self-fill WhatsApp notification
+    await sendWhatsAppAlert(
+      `🧾 *FUEL RECEIPT*\n\n👤 ${driverName}\n🚛 Load: ${loadId || 'N/A'}\n💵 Amount: $${receiptAmount || 0}\n📏 Odometer: ${odometer || 'N/A'} mi\n\n⏰ ${new Date().toLocaleTimeString('en-US', { timeZone: 'America/New_York' })}`
+    );
+  }
+
+  return { ok: true, id: docRef.id, estimatedGallons, estimatedCost, dieselPrice };
+});
+
+// ─────────────────────────────────────────────────────────────
+// Resolve fuel request (admin approve/deny).
+// ─────────────────────────────────────────────────────────────
+exports.resolveFuelRequest = onCall(async (req) => {
+  if (!req.auth || req.auth.token.role !== 'admin') {
+    throw new HttpsError('permission-denied', 'Admin only.');
+  }
+  const { requestId, action, amount, notes } = req.data || {};
+  if (!requestId || !['approved', 'denied'].includes(action)) {
+    throw new HttpsError('invalid-argument', 'requestId and action=approved|denied required.');
+  }
+
+  const update = {
+    status: action,
+    resolvedAt: admin.firestore.FieldValue.serverTimestamp(),
+    resolvedBy: req.auth.uid,
+    approvedAmount: action === 'approved' ? (amount || null) : null,
+    adminNotes: notes || null
+  };
+  await db.collection('fuelRequests').doc(requestId).update(update);
+
+  // Notify driver
+  const reqDoc = await db.collection('fuelRequests').doc(requestId).get();
+  const reqData = reqDoc.data();
+  if (reqData && reqData.driver_uid) {
+    await pushToUid(reqData.driver_uid, {
+      title: action === 'approved' ? '✅ Fuel Request Approved' : '❌ Fuel Request Denied',
+      body: action === 'approved'
+        ? `$${amount || reqData.estimatedCost} approved for load ${reqData.load_id || 'N/A'}`
+        : `Request for load ${reqData.load_id || 'N/A'} was denied. ${notes || ''}`
+    });
+  }
+
+  return { ok: true };
 });
 
 // ─────────────────────────────────────────────────────────────

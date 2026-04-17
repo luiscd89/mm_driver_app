@@ -15,10 +15,11 @@ let previousActiveDrivers = new Set();
 export function renderAdmin(tab = currentTab) {
   currentTab = tab;
   document.querySelectorAll('.atab').forEach((t, i) =>
-    t.classList.toggle('active', ['overview','drivers','gas','logs','settings'][i] === tab));
+    t.classList.toggle('active', ['overview','drivers','fuel','gas','logs','settings'][i] === tab));
 
   const c = document.getElementById('adminContent');
-  document.getElementById('gasCount').textContent = state.gasReceipts.length;
+  const pendingFuel = (state.fuelRequests || []).filter(r => r.status === 'pending').length;
+  document.getElementById('fuelPendingCount').textContent = pendingFuel;
 
   const drivers = state.allDrivers;
   const routes  = state.allRoutes;
@@ -143,6 +144,52 @@ export function renderAdmin(tab = currentTab) {
     }).join('')}</div>`;
   }
 
+  else if (tab === 'fuel') {
+    const fuelReqs = state.fuelRequests || [];
+    const pending = fuelReqs.filter(r => r.status === 'pending');
+    const approved = fuelReqs.filter(r => r.status === 'approved');
+    const selfFills = fuelReqs.filter(r => r.type === 'self-fill');
+    const totalSpent = fuelReqs.filter(r => r.status === 'approved' || r.type === 'self-fill')
+      .reduce((s, r) => s + parseFloat(r.approvedAmount || r.receiptAmount || r.estimatedCost || 0), 0);
+
+    // Group by driver for fuel tracking
+    const byDriver = {};
+    fuelReqs.forEach(r => { (byDriver[r.driver_name || r.driver_uid] ||= []).push(r); });
+
+    c.innerHTML = `
+      <div style="padding:16px;">
+        <div class="admin-stats">
+          <div class="astat"><span class="anum" style="color:var(--accent2)">${pending.length}</span><div class="albl">Pending</div></div>
+          <div class="astat"><span class="anum" style="color:var(--ok)">${approved.length}</span><div class="albl">Approved</div></div>
+          <div class="astat"><span class="anum" style="color:var(--blue)">${selfFills.length}</span><div class="albl">Self-Fill</div></div>
+          <div class="astat"><span class="anum" style="color:var(--accent)">$${totalSpent.toFixed(0)}</span><div class="albl">Total Spent</div></div>
+        </div>
+
+        ${pending.length ? `<div style="margin-bottom:16px;">
+          <div style="font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--accent2);font-weight:700;margin-bottom:10px;">Pending Requests</div>
+          ${pending.map(r => renderFuelRequestCard(r, true)).join('')}
+        </div>` : ''}
+
+        <div style="font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);font-weight:700;margin-bottom:10px;">Fuel Usage by Driver</div>
+        ${Object.entries(byDriver).map(([name, reqs]) => {
+          const total = reqs.reduce((s, r) => s + parseFloat(r.approvedAmount || r.receiptAmount || 0), 0);
+          const gallons = reqs.reduce((s, r) => s + (r.estimatedGallons || 0), 0);
+          return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:10px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+              <div style="font-size:13px;font-weight:700;">${name}</div>
+              <div style="font-family:'Space Mono',monospace;font-size:14px;font-weight:700;color:var(--accent2);">$${total.toFixed(2)}</div>
+            </div>
+            <div style="font-size:10px;color:var(--muted);">${reqs.length} requests · ~${gallons} gal</div>
+          </div>`;
+        }).join('')}
+
+        ${fuelReqs.filter(r => r.status !== 'pending').length ? `
+          <div style="font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);font-weight:700;margin-bottom:10px;margin-top:16px;">Recent History</div>
+          ${fuelReqs.filter(r => r.status !== 'pending').slice(0, 20).map(r => renderFuelRequestCard(r, false)).join('')}
+        ` : ''}
+      </div>`;
+  }
+
   else if (tab === 'gas') {
     if (!gas.length) {
       c.innerHTML = '<div class="empty-admin"><div class="icon">⛽</div><p>No gas receipts submitted yet</p></div>';
@@ -255,6 +302,49 @@ export function renderAdmin(tab = currentTab) {
   }
 }
 
+const resolveFuelRequest = httpsCallable(functions, 'resolveFuelRequest');
+
+function renderFuelRequestCard(r, showActions) {
+  const statusColors = { pending: 'var(--accent2)', approved: 'var(--ok)', denied: 'var(--danger)', completed: 'var(--blue)' };
+  const statusLabels = { pending: 'Pending', approved: 'Approved', denied: 'Denied', completed: 'Self-Fill' };
+  const color = statusColors[r.status] || 'var(--muted)';
+  const date = r.createdAt?.toDate ? r.createdAt.toDate().toLocaleString() : '';
+  const isDash = r.type === 'request';
+
+  return `<div style="background:var(--surface);border:1px solid ${showActions ? 'var(--accent2)' : 'var(--border)'};border-radius:12px;padding:14px 16px;margin-bottom:10px;${showActions ? 'box-shadow:0 0 12px rgba(245,158,11,.1);' : ''}">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+      <div>
+        <div style="font-size:13px;font-weight:700;">${r.driver_name || 'Unknown'}</div>
+        <div style="font-size:10px;color:var(--muted);">${date} · Load: ${r.load_id || 'N/A'}</div>
+      </div>
+      <span style="font-size:9px;padding:3px 9px;border-radius:20px;background:${color}22;color:${color};font-weight:700;">${isDash ? '⛽' : '🧾'} ${statusLabels[r.status] || r.status}</span>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:8px;">
+      <div style="background:var(--surface2);border-radius:6px;padding:6px 8px;text-align:center;">
+        <div style="font-family:'Space Mono',monospace;font-size:12px;font-weight:700;color:var(--text);">${r.fuelLevel != null ? r.fuelLevel + '%' : 'N/A'}</div>
+        <div style="font-size:8px;color:var(--muted);text-transform:uppercase;">Fuel</div>
+      </div>
+      <div style="background:var(--surface2);border-radius:6px;padding:6px 8px;text-align:center;">
+        <div style="font-family:'Space Mono',monospace;font-size:12px;font-weight:700;color:var(--text);">${r.defLevel != null ? r.defLevel + '%' : 'N/A'}</div>
+        <div style="font-size:8px;color:var(--muted);text-transform:uppercase;">DEF</div>
+      </div>
+      <div style="background:var(--surface2);border-radius:6px;padding:6px 8px;text-align:center;">
+        <div style="font-family:'Space Mono',monospace;font-size:12px;font-weight:700;color:var(--accent2);">$${r.receiptAmount || r.estimatedCost || r.approvedAmount || 0}</div>
+        <div style="font-size:8px;color:var(--muted);text-transform:uppercase;">${r.type === 'self-fill' ? 'Paid' : 'Est.'}</div>
+      </div>
+    </div>
+    ${r.dashImageUrl ? `<img src="${r.dashImageUrl}" style="width:100%;max-height:150px;object-fit:cover;border-radius:8px;margin-bottom:8px;cursor:pointer;" class="gas-thumb" data-full="${r.dashImageUrl}">` : ''}
+    ${r.receiptImageUrl ? `<img src="${r.receiptImageUrl}" style="width:100%;max-height:150px;object-fit:cover;border-radius:8px;margin-bottom:8px;cursor:pointer;" class="gas-thumb" data-full="${r.receiptImageUrl}">` : ''}
+    ${r.odometer ? `<div style="font-size:10px;color:var(--muted);">Odometer: ${r.odometer} mi</div>` : ''}
+    ${r.notes ? `<div style="font-size:10px;color:var(--text2);margin-top:4px;">Note: ${r.notes}</div>` : ''}
+    ${showActions ? `<div style="display:flex;gap:8px;margin-top:10px;">
+      <input type="number" class="gas-input fuel-approve-amount" data-req-id="${r.id}" value="${r.estimatedCost || ''}" placeholder="Amount $" style="margin:0;flex:1;padding:8px;">
+      <button class="fuel-approve-btn" data-req-id="${r.id}" style="padding:8px 16px;border-radius:8px;border:none;background:var(--ok);color:#fff;font-weight:700;font-size:12px;cursor:pointer;">Approve</button>
+      <button class="fuel-deny-btn" data-req-id="${r.id}" style="padding:8px 16px;border-radius:8px;border:none;background:var(--danger);color:#fff;font-weight:700;font-size:12px;cursor:pointer;">Deny</button>
+    </div>` : ''}
+  </div>`;
+}
+
 async function loadWhatsAppSettings(c) {
   let cfg = { enabled: false, provider: 'callmebot', phones: [], webhookUrl: '', phoneNumberId: '', accessToken: '', recipientNumbers: [] };
   try {
@@ -281,6 +371,7 @@ async function loadWhatsAppSettings(c) {
         <label class="login-label">Provider</label>
         <select id="waProvider" class="login-input" style="margin-bottom:12px;padding:10px;">
           <option value="callmebot" ${cfg.provider==='callmebot'?'selected':''}>CallMeBot (Free — individual numbers)</option>
+          <option value="twilio" ${cfg.provider==='twilio'?'selected':''}>Twilio WhatsApp (Recommended)</option>
           <option value="webhook" ${cfg.provider==='webhook'?'selected':''}>Webhook (Make.com, Zapier, n8n)</option>
           <option value="meta" ${cfg.provider==='meta'?'selected':''}>Meta WhatsApp Business API</option>
         </select>
@@ -289,6 +380,18 @@ async function loadWhatsAppSettings(c) {
           <label class="login-label">Phone Numbers (one per line: number:apikey)</label>
           <textarea id="waPhones" class="login-input" rows="4" style="resize:vertical;font-size:11px;" placeholder="15551234567:123456\n15559876543:654321">${phonesJson}</textarea>
           <div style="font-size:10px;color:var(--muted);margin-bottom:12px;">Get your API key: send "I allow callmebot to send me messages" to +34 644 71 98 35 on WhatsApp</div>
+        </div>
+
+        <div id="waTwilioFields" style="display:${cfg.provider==='twilio'?'block':'none'};">
+          <label class="login-label">Twilio Account SID</label>
+          <input id="waTwilioSid" class="login-input" type="text" placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" value="${cfg.accountSid || ''}">
+          <label class="login-label">Auth Token</label>
+          <input id="waTwilioToken" class="login-input" type="password" placeholder="Your Twilio auth token" value="${cfg.authToken || ''}">
+          <label class="login-label">From Number (Twilio WhatsApp number, no +)</label>
+          <input id="waTwilioFrom" class="login-input" type="text" placeholder="14155238886" value="${cfg.fromNumber || ''}">
+          <label class="login-label">To Numbers (comma-separated, no +)</label>
+          <input id="waTwilioTo" class="login-input" type="text" placeholder="15551234567, 15559876543" value="${(cfg.toNumbers || []).join(', ')}">
+          <div style="font-size:10px;color:var(--muted);margin-bottom:12px;">Get started at <a href="https://www.twilio.com/whatsapp" target="_blank" style="color:var(--accent);">twilio.com/whatsapp</a>. Each recipient must join your sandbox first.</div>
         </div>
 
         <div id="waWebhookFields" style="display:${cfg.provider==='webhook'?'block':'none'};">
@@ -323,7 +426,7 @@ async function loadWhatsAppSettings(c) {
 
 export function wireAdminEvents() {
   document.querySelectorAll('.atab').forEach((t, i) => {
-    t.addEventListener('click', () => renderAdmin(['overview','drivers','gas','logs','settings'][i]));
+    t.addEventListener('click', () => renderAdmin(['overview','drivers','fuel','gas','logs','settings'][i]));
   });
 
   document.getElementById('adminContent').addEventListener('change', (e) => {
@@ -331,9 +434,11 @@ export function wireAdminEvents() {
     if (e.target.id === 'waProvider') {
       const v = e.target.value;
       const cb = document.getElementById('waCallmebotFields');
+      const tw = document.getElementById('waTwilioFields');
       const wh = document.getElementById('waWebhookFields');
       const mt = document.getElementById('waMetaFields');
       if (cb) cb.style.display = v === 'callmebot' ? 'block' : 'none';
+      if (tw) tw.style.display = v === 'twilio' ? 'block' : 'none';
       if (wh) wh.style.display = v === 'webhook' ? 'block' : 'none';
       if (mt) mt.style.display = v === 'meta' ? 'block' : 'none';
     }
@@ -352,6 +457,11 @@ export function wireAdminEvents() {
           const [number, apikey] = line.split(':');
           return { number: (number || '').trim(), apikey: (apikey || '').trim() };
         });
+      } else if (provider === 'twilio') {
+        cfg.accountSid = (document.getElementById('waTwilioSid')?.value || '').trim();
+        cfg.authToken = (document.getElementById('waTwilioToken')?.value || '').trim();
+        cfg.fromNumber = (document.getElementById('waTwilioFrom')?.value || '').trim();
+        cfg.toNumbers = (document.getElementById('waTwilioTo')?.value || '').split(',').map(s => s.trim()).filter(Boolean);
       } else if (provider === 'webhook') {
         cfg.webhookUrl = (document.getElementById('waWebhookUrl')?.value || '').trim();
       } else if (provider === 'meta') {
@@ -426,6 +536,46 @@ export function wireAdminEvents() {
         e.target.disabled = false;
         e.target.textContent = '🔄 Sync Routes from Sheet';
       }
+      return;
+    }
+
+    // Fuel approve/deny
+    const approveBtn = e.target.closest('.fuel-approve-btn');
+    if (approveBtn) {
+      const reqId = approveBtn.dataset.reqId;
+      const amountInput = document.querySelector(`.fuel-approve-amount[data-req-id="${reqId}"]`);
+      approveBtn.disabled = true;
+      approveBtn.textContent = '...';
+      try {
+        await resolveFuelRequest({ requestId: reqId, action: 'approved', amount: parseFloat(amountInput?.value) || 0 });
+        toast('Fuel request approved!', 'success');
+      } catch (err) { toast('Failed: ' + err.message, 'alert'); }
+      approveBtn.disabled = false;
+      approveBtn.textContent = 'Approve';
+      return;
+    }
+    const denyBtn = e.target.closest('.fuel-deny-btn');
+    if (denyBtn) {
+      const reqId = denyBtn.dataset.reqId;
+      denyBtn.disabled = true;
+      denyBtn.textContent = '...';
+      try {
+        await resolveFuelRequest({ requestId: reqId, action: 'denied' });
+        toast('Fuel request denied.', 'info');
+      } catch (err) { toast('Failed: ' + err.message, 'alert'); }
+      denyBtn.disabled = false;
+      denyBtn.textContent = 'Deny';
+      return;
+    }
+
+    // Lightbox for fuel images
+    const fuelThumb = e.target.closest('.gas-thumb');
+    if (fuelThumb && fuelThumb.dataset.full) {
+      const overlay = document.createElement('div');
+      overlay.className = 'lightbox-overlay';
+      overlay.innerHTML = `<img src="${fuelThumb.dataset.full}" class="lightbox-img"><div class="lightbox-close">✕</div>`;
+      overlay.addEventListener('click', () => overlay.remove());
+      document.body.appendChild(overlay);
       return;
     }
 
